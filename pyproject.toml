@@ -5,50 +5,50 @@ description = "Socratic question generation with FLAN-T5 and LoRA fine-tuning"
 requires-python = ">=3.10"
 
 dependencies = [
-    # Core ML
-    "torch>=2.0.0",
-    "transformers>=4.36.0",
-    "datasets>=2.16.0",
-    "accelerate>=0.25.0",
-    "sentencepiece>=0.1.99",
-    "peft>=0.7.0",
+    # Core ML — pinned to versions verified on EC2 g5.2xlarge (Feb 2026)
+    "torch>=2.6.0",                    # 2.6+ required for CVE-2025-32434 safe checkpoint loading
+    "transformers>=4.47.0",            # 4.47+ for processing_class in Trainer; latest stable: 5.2.0
+    "datasets>=3.0.0",                 # latest stable: 4.6.0
+    "accelerate>=1.0.0",               # latest stable: 1.12.0
+    "sentencepiece>=0.2.0",
+    "peft>=0.14.0",                    # latest stable: 0.18.1; modern LoRA + TaskType
 
     # Data processing
-    "numpy>=1.24.0",
-    "pandas>=2.0.0",
-    "scikit-learn>=1.3.0",
-    "evaluate>=0.4.6",
+    "numpy>=2.0.0",                    # latest stable: 2.4.2
+    "pandas>=2.2.0",                   # latest stable: 3.0.1
+    "scikit-learn>=1.5.0",             # latest stable: 1.8.0
+    "evaluate>=0.4.6",                 # latest stable: 0.4.6 (unchanged)
 
     # Evaluation metrics
     "rouge-score>=0.1.2",
     "bert-score>=0.3.13",
-    "sacrebleu>=2.3.0",
-    "nltk>=3.8.0",
+    "sacrebleu>=2.4.0",
+    "nltk>=3.9.0",
 
     # Keyphrase extraction
-    "keybert>=0.8.0",
-    "sentence-transformers>=2.2.0",
+    "keybert>=0.8.5",                  # latest stable: 0.9.0
+    "sentence-transformers>=4.0.0",    # latest stable: 5.2.3
 
     # Wikipedia retrieval
-    "wikipedia-api>=0.6.0",
+    "wikipedia-api>=0.7.0",
 
     # Backend
-    "fastapi>=0.109.0",
-    "uvicorn>=0.25.0",
-    "python-multipart>=0.0.6",
-    "httpx>=0.26.0",
-    "pydantic>=2.0.0",
-    "python-dotenv>=1.0.0",
+    "fastapi>=0.115.0",                # latest stable: 0.133.0
+    "uvicorn>=0.30.0",
+    "python-multipart>=0.0.9",
+    "httpx>=0.27.0",
+    "pydantic>=2.10.0",               # latest stable: 2.12.5
+    "python-dotenv>=1.0.1",
 
     # Notebooks & visualisation
-    "matplotlib>=3.7.0",
-    "seaborn>=0.12.0",
-    "tqdm>=4.66.0",
+    "matplotlib>=3.9.0",               # latest stable: 3.10.8
+    "seaborn>=0.13.0",
+    "tqdm>=4.67.0",
     "tabulate>=0.9.0",
-    "tensorboard>=2.15.0",
-    "ipywidgets>=8.0.0",
-    "jupyterlab>=4.0.0",
-    "ipykernel>=6.0.0",
+    "tensorboard>=2.18.0",
+    "ipywidgets>=8.1.0",
+    "jupyterlab>=4.3.0",
+    "ipykernel>=6.29.0",
 ]
 
 [tool.uv]
