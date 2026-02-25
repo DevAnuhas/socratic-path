@@ -96,9 +96,9 @@ else:
 
 TRAINING_CONFIG = {
     "learning_rate": 5e-5,
-    "per_device_train_batch_size": 16,   # A10G 24GB handles this for all 3 models
-    "per_device_eval_batch_size": 32,    # No gradients — larger batch for faster eval
-    "gradient_accumulation_steps": 1,    # Effective batch = 16 (same as before, less overhead)
+    "per_device_train_batch_size": 32,   # A10G 24GB: ~10GB for T5-small, ~18GB for T5-base
+    "per_device_eval_batch_size": 64,    # No gradients — max batch for fastest eval
+    "gradient_accumulation_steps": 1,    # Effective batch = 32
     "num_train_epochs": 10,              # Upper bound; early stopping fires sooner
     "lr_scheduler_type": "cosine",
     "warmup_ratio": 0.06,                # ~6% warmup; adapts to total steps automatically
@@ -340,10 +340,6 @@ def train_model(model_key: str, project_root: Path):
     lora_config = LoraConfig(**LORA_CONFIG)
     model = get_peft_model(base_model, lora_config)
     model.enable_input_require_grads()
-
-    if device == "cuda":
-        model.gradient_checkpointing_enable()
-        print("  Gradient checkpointing enabled (saves ~40% VRAM)")
 
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total = model.num_parameters()
