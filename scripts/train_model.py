@@ -82,7 +82,6 @@ LORA_CONFIG = {
     "lora_dropout": 0.1,
     "bias": "none",
     "task_type": TaskType.SEQ_2_SEQ_LM,
-    "modules_to_save": ["embed_tokens", "lm_head"],
 }
 
 # Precision: bf16 on Ampere+ GPUs (A10G, A100), fp16 on older CUDA, fp32 on CPU.
