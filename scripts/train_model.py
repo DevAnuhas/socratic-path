@@ -357,6 +357,7 @@ def train_model(model_key: str, project_root: Path):
 
     def compute_metrics(eval_preds):
         predictions, labels = eval_preds
+        predictions = np.where(predictions != -100, predictions, tokenizer.pad_token_id)
         decoded_preds = tokenizer.batch_decode(predictions, skip_special_tokens=True)
         labels = np.where(labels != -100, labels, tokenizer.pad_token_id)
         decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
