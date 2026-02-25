@@ -330,9 +330,10 @@ def train_model(model_key: str, project_root: Path):
 
     # ── Base Model ────────────────────────────────────────────────────────
     print(f"\nLoading base model: {hf_name}")
-    base_model = T5ForConditionalGeneration.from_pretrained(hf_name)
+    base_model = T5ForConditionalGeneration.from_pretrained(
+        hf_name, tie_word_embeddings=False,
+    )
     base_model.resize_token_embeddings(len(tokenizer))
-    base_model.config.tie_word_embeddings = False  # Resizing untied them; silence warning
     base_params = base_model.num_parameters()
     print(f"  Base model parameters: {base_params:,}")
 
