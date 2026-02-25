@@ -101,7 +101,7 @@ TRAINING_CONFIG = {
     "gradient_accumulation_steps": 1,    # Effective batch = 32
     "num_train_epochs": 10,              # Upper bound; early stopping fires sooner
     "lr_scheduler_type": "cosine",
-    "warmup_ratio": 0.06,                # ~6% warmup; adapts to total steps automatically
+    "warmup_fraction": 0.06,              # ~6% warmup; converted to warmup_steps at runtime
     "weight_decay": 0.01,
     "max_target_length": 80,
     "fp16": _USE_FP16,
@@ -332,6 +332,7 @@ def train_model(model_key: str, project_root: Path):
     print(f"\nLoading base model: {hf_name}")
     base_model = T5ForConditionalGeneration.from_pretrained(hf_name)
     base_model.resize_token_embeddings(len(tokenizer))
+    base_model.config.tie_word_embeddings = False  # Resizing untied them; silence warning
     base_params = base_model.num_parameters()
     print(f"  Base model parameters: {base_params:,}")
 
@@ -381,6 +382,19 @@ def train_model(model_key: str, project_root: Path):
     timestamp = datetime.now().strftime("%Y%m%d-%H%M")
     run_name = f"{output_dir_name}-{timestamp}"
 
+    # Compute warmup_steps from fraction
+    train_samples = len(dataset["train"])
+    batch = TRAINING_CONFIG["per_device_train_batch_size"]
+    accum = TRAINING_CONFIG["gradient_accumulation_steps"]
+    steps_per_epoch = (train_samples + batch - 1) // batch // accum
+    total_steps = steps_per_epoch * TRAINING_CONFIG["num_train_epochs"]
+    warmup_steps = int(total_steps * TRAINING_CONFIG["warmup_fraction"])
+    print(f"\n  Total training steps:  {total_steps:,}")
+    print(f"  Warmup steps:          {warmup_steps} ({TRAINING_CONFIG['warmup_fraction']:.0%} of total)")
+
+    # Set tensorboard dir via env var
+    os.environ["TENSORBOARD_LOGGING_DIR"] = str(log_dir / "tensorboard")
+
     training_args = Seq2SeqTrainingArguments(
         output_dir=str(checkpoint_path),
         run_name=run_name,
@@ -392,7 +406,7 @@ def train_model(model_key: str, project_root: Path):
         # Optimiser
         learning_rate=TRAINING_CONFIG["learning_rate"],
         weight_decay=TRAINING_CONFIG["weight_decay"],
-        warmup_ratio=TRAINING_CONFIG["warmup_ratio"],
+        warmup_steps=warmup_steps,
         lr_scheduler_type=TRAINING_CONFIG["lr_scheduler_type"],
         optim="adamw_torch_fused" if device == "cuda" else "adamw_torch",
         # Precision
@@ -408,7 +422,6 @@ def train_model(model_key: str, project_root: Path):
         metric_for_best_model="rougeL",
         greater_is_better=True,
         # Logging
-        logging_dir=str(log_dir / "tensorboard"),
         logging_steps=TRAINING_CONFIG["logging_steps"],
         report_to="tensorboard",
         # Generation (evaluation only)
