@@ -244,8 +244,10 @@ has broader dynamic range and no such issues on Ampere GPUs.
 
 ### PyTorch CUDA Index
 
-The project uses `https://download.pytorch.org/whl/cu121` for CUDA 12.1 wheels,
-matching the EC2 Deep Learning AMI (Ubuntu 22.04, CUDA 12.1).
+The project uses `https://download.pytorch.org/whl/cu124` for CUDA 12.4 wheels.
+Originally used `cu121`, but PyTorch 2.6+ dropped cu121 builds — the minimum CUDA
+index is now cu124. The cu124 wheels bundle their own CUDA runtime and are
+backwards-compatible with the EC2 Deep Learning AMI's NVIDIA driver (535+).
 
 ---
 
@@ -298,32 +300,9 @@ improvement) despite being the smallest model variant tested.
 | vCPUs           | 8                                                        |
 | RAM             | 32 GB                                                    |
 | AMI             | Deep Learning AMI PyTorch 2.x (Ubuntu 22.04)             |
-| CUDA            | 12.1                                                     |
+| CUDA            | 12.4 (wheels via cu124 index)                            |
 | Python          | 3.10+ (venv at `/home/ubuntu/socratic-path/.venv/`)      |
-| Package Manager | uv (with PyTorch CUDA 12.1 index)                        |
-
-### Training Command
-
-```bash
-cd socratic-path
-nohup bash scripts/run_all_training.sh > training_output.log 2>&1 &
-tail -f training_output.log  # Monitor progress
-```
-
-### Abort Training
-
-## 8. Hardware & Environment
-
-| Component       | Specification                                            |
-| --------------- | -------------------------------------------------------- |
-| EC2 Instance    | g5.2xlarge                                               |
-| GPU             | NVIDIA A10G (24 GB VRAM, Ampere, compute capability 8.6) |
-| vCPUs           | 8                                                        |
-| RAM             | 32 GB                                                    |
-| AMI             | Deep Learning AMI PyTorch 2.x (Ubuntu 22.04)             |
-| CUDA            | 12.1                                                     |
-| Python          | 3.10+ (venv at `/home/ubuntu/socratic-path/.venv/`)      |
-| Package Manager | uv (with PyTorch CUDA 12.1 index)                        |
+| Package Manager | uv (with PyTorch CUDA 12.4 index)                        |
 
 ### Training Command
 
