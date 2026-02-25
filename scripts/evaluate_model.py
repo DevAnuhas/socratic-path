@@ -34,7 +34,7 @@ import pandas as pd
 import torch
 from tqdm.auto import tqdm
 
-from transformers import T5Tokenizer, T5ForConditionalGeneration
+from transformers import AutoTokenizer, T5ForConditionalGeneration
 from peft import PeftModel
 import evaluate as hf_evaluate
 from rouge_score import rouge_scorer as rs_lib
@@ -74,9 +74,9 @@ EVAL_GENERATION_CONFIG = {
 
 # SocratiQ paper baselines (Ang et al., EACL 2023, Table 3)
 PAPER_BASELINES = {
-    "T5-p (paper, prompt-based)": {"rouge1": 0.172, "rouge2": 0.017, "rougeL": 0.211, "bleu4": 0.017, "bertscore": 0.632},
-    "ProphetNet-p (paper, prompt)": {"rouge1": 0.178, "rouge2": 0.018, "rougeL": 0.208, "bleu4": 0.018, "bertscore": 0.632},
-    "GPT-p (paper, prompt-based)": {"rouge1": 0.165, "rouge2": 0.013, "rougeL": 0.187, "bleu4": 0.013, "bertscore": 0.615},
+    "T5-p (paper, prompt-based)": {"rouge1": 0.172, "rouge2": 0.017, "rougeL": 0.211, "bleu4": 0.017, "bertscore": 0.632, "bleurt": 0.426},
+    "ProphetNet-p (paper, prompt)": {"rouge1": 0.178, "rouge2": 0.018, "rougeL": 0.208, "bleu4": 0.018, "bertscore": 0.632, "bleurt": 0.425},
+    "GPT-p (paper, prompt-based)": {"rouge1": 0.165, "rouge2": 0.013, "rougeL": 0.187, "bleu4": 0.013, "bertscore": 0.615, "bleurt": 0.423},
 }
 
 
@@ -89,7 +89,7 @@ def load_model(model_key: str, project_root: Path, device: str):
         raise FileNotFoundError(f"No adapter found at {adapter_path}. Train the model first.")
 
     print(f"  Loading tokenizer from: {adapter_path}")
-    tokenizer = T5Tokenizer.from_pretrained(str(adapter_path))
+    tokenizer = AutoTokenizer.from_pretrained(str(adapter_path))
 
     print(f"  Loading base model: {model_info['hf_name']}")
     base_model = T5ForConditionalGeneration.from_pretrained(model_info["hf_name"])
@@ -106,32 +106,50 @@ def load_model(model_key: str, project_root: Path, device: str):
     return model, tokenizer
 
 
-def generate_predictions(model, tokenizer, test_df: pd.DataFrame, device: str):
-    """Generate predictions for the entire test set."""
-    predictions = []
-    references = []
+def generate_predictions(model, tokenizer, test_df: pd.DataFrame, device: str,
+                         batch_size: int = 32):
+    """Generate predictions for the entire test set in batches."""
+    all_predictions = []
+    all_references = []
 
-    for _, row in tqdm(test_df.iterrows(), total=len(test_df), desc="Generating"):
-        input_text = row["input_text"]
-        inputs = tokenizer(input_text, return_tensors="pt", max_length=400, truncation=True)
+    input_texts = test_df["input_text"].tolist()
+    ref_col = "original_target" if "original_target" in test_df.columns else "target_text"
+    raw_refs = test_df[ref_col].tolist()
+
+    # Pre-clean references once
+    for ref in raw_refs:
+        ref = ref.replace("[Question]", "").strip() if isinstance(ref, str) else ""
+        all_references.append(ref)
+
+    # Process in batches
+    num_batches = (len(input_texts) + batch_size - 1) // batch_size
+    use_amp = device == "cuda"
+
+    for i in tqdm(range(0, len(input_texts), batch_size),
+                  total=num_batches, desc="Generating"):
+        batch_texts = input_texts[i : i + batch_size]
+        inputs = tokenizer(
+            batch_texts, return_tensors="pt", max_length=400,
+            truncation=True, padding=True,
+        )
         inputs = {k: v.to(device) for k, v in inputs.items()}
 
         with torch.no_grad():
-            outputs = model.generate(**inputs, **EVAL_GENERATION_CONFIG)
+            if use_amp:
+                with torch.cuda.amp.autocast():
+                    outputs = model.generate(**inputs, **EVAL_GENERATION_CONFIG)
+            else:
+                outputs = model.generate(**inputs, **EVAL_GENERATION_CONFIG)
 
-        generated = tokenizer.decode(outputs[0], skip_special_tokens=True)
-        generated = generated.replace("[Question]", "").strip()
-        predictions.append(generated)
+        decoded = tokenizer.batch_decode(outputs, skip_special_tokens=True)
+        decoded = [d.replace("[Question]", "").strip() for d in decoded]
+        all_predictions.extend(decoded)
 
-        ref = row.get("original_target", row.get("target_text", ""))
-        ref = ref.replace("[Question]", "").strip() if isinstance(ref, str) else ""
-        references.append(ref)
-
-    return predictions, references
+    return all_predictions, all_references
 
 
 def compute_all_metrics(predictions: list, references: list, device: str):
-    """Compute ROUGE, BLEU, and BERTScore."""
+    """Compute ROUGE, BLEU, BERTScore, and BLEURT."""
     clean_preds = [p.replace("[Question]", "").strip() for p in predictions]
     clean_refs = [r.replace("[Question]", "").strip() for r in references]
 
@@ -153,16 +171,38 @@ def compute_all_metrics(predictions: list, references: list, device: str):
     )
     bleu4 = bleu_result["score"] / 100.0
 
-    # BERTScore
-    print("  Computing BERTScore (this may take several minutes)...")
-    P, R, F1 = bert_score_fn(predictions, references, lang="en", verbose=True, device=device)
+    # BERTScore — using deberta-xlarge-mnli as recommended by the BERTScore
+    # authors for English text (higher correlation with human judgements than
+    # the default roberta-large). This matches the paper's evaluation setup.
+    print("  Computing BERTScore (deberta-xlarge-mnli, may take several minutes)...")
+    P, R, F1 = bert_score_fn(
+        predictions, references, lang="en", verbose=True, device=device,
+        model_type="microsoft/deberta-xlarge-mnli",
+    )
     bertscore_results = {
         "precision": P.mean().item(),
         "recall": R.mean().item(),
         "f1": F1.mean().item(),
     }
 
-    # Per-sample scores
+    # BLEURT — learned metric that the paper reports alongside BERTScore.
+    # Requires ~2GB checkpoint download on first run. Falls back gracefully
+    # if the package is not installed (pip install bleurt-pytorch).
+    bleurt_score = None
+    try:
+        print("  Computing BLEURT...")
+        bleurt_metric = hf_evaluate.load("bleurt", "BLEURT-20")
+        bleurt_result = bleurt_metric.compute(
+            predictions=clean_preds,
+            references=clean_refs,
+        )
+        bleurt_score = float(np.mean(bleurt_result["scores"]))
+        print(f"    BLEURT mean: {bleurt_score:.4f}")
+    except Exception as e:
+        print(f"    BLEURT skipped ({e}). Install with: pip install bleurt-pytorch")
+        print("    This is optional — BERTScore is the primary semantic metric.")
+
+    # Per-sample scores for distribution plots and per-type analysis
     print("  Computing per-sample scores...")
     scorer = rs_lib.RougeScorer(["rougeL"], use_stemmer=True)
     sf = SmoothingFunction().method1
@@ -181,6 +221,7 @@ def compute_all_metrics(predictions: list, references: list, device: str):
         "rouge": rouge_results,
         "bleu4": bleu4,
         "bertscore": bertscore_results,
+        "bleurt": bleurt_score,
         "per_sample_rougeL": np.array(per_sample_rougeL),
         "per_sample_bleu": np.array(per_sample_bleu),
         "per_sample_bertscore_f1": F1.numpy(),
@@ -189,14 +230,25 @@ def compute_all_metrics(predictions: list, references: list, device: str):
 
 def compute_per_type_rouge(test_df: pd.DataFrame):
     """Compute ROUGE broken down by Socratic question type."""
+    import re
     rouge_metric = hf_evaluate.load("rouge")
 
+    # Input format: "Generate a Socratic question for this context: {type}: {context}"
+    # The type token sits between the instruction prefix and the second colon.
+    # Using a regex anchored to the prefix avoids breaking on colons in the context.
+    _TYPE_RE = re.compile(
+        r"Generate a Socratic question for this context:\s*([^:]+):",
+        re.IGNORECASE,
+    )
+
     def extract_question_type(input_text: str) -> str:
+        m = _TYPE_RE.search(input_text)
+        if m:
+            return m.group(1).strip()
+        # Fallback: try raw split for any non-standard formats
         parts = input_text.split(":")
-        if len(parts) >= 3:
-            return parts[1].strip()
-        elif len(parts) == 2:
-            return parts[0].strip()
+        if len(parts) >= 2:
+            return parts[-2].strip().split()[-1]  # last word before final colon
         return "unknown"
 
     test_df = test_df.copy()
@@ -335,6 +387,8 @@ def evaluate_single_model(model_key: str, project_root: Path, device: str):
     print(f"  BERTScore P:    {metrics['bertscore']['precision']:.4f}")
     print(f"  BERTScore R:    {metrics['bertscore']['recall']:.4f}")
     print(f"  BERTScore F1:   {metrics['bertscore']['f1']:.4f}")
+    if metrics['bleurt'] is not None:
+        print(f"  BLEURT:         {metrics['bleurt']:.4f}")
 
     if type_results:
         print(f"\n  Per-Question-Type ROUGE-L:")
@@ -354,6 +408,7 @@ def evaluate_single_model(model_key: str, project_root: Path, device: str):
         "rouge": {k: float(v) for k, v in metrics["rouge"].items()},
         "bleu4": float(metrics["bleu4"]),
         "bertscore": metrics["bertscore"],
+        "bleurt": metrics["bleurt"],
         "per_type_rouge": type_results,
         "generation_config": EVAL_GENERATION_CONFIG,
     }
@@ -390,24 +445,27 @@ def generate_comparison_report(all_results: dict, project_root: Path):
     print(f"{'=' * 90}")
 
     # Build comparison table
-    header = f"{'Model':<45} {'ROUGE-1':>8} {'ROUGE-2':>8} {'ROUGE-L':>8} {'BLEU-4':>8} {'BERTScore':>10}"
+    header = f"{'Model':<45} {'ROUGE-1':>8} {'ROUGE-2':>8} {'ROUGE-L':>8} {'BLEU-4':>8} {'BERTScore':>10} {'BLEURT':>8}"
     print(header)
-    print("-" * 90)
+    print("-" * 100)
 
     # Paper baselines
     for name, scores in PAPER_BASELINES.items():
+        bleurt_str = f"{scores['bleurt']:>8.4f}" if 'bleurt' in scores else f"{'N/A':>8}"
         print(f"{name:<45} {scores['rouge1']:>8.4f} {scores['rouge2']:>8.4f} "
-              f"{scores['rougeL']:>8.4f} {scores['bleu4']:>8.4f} {scores['bertscore']:>10.4f}")
+              f"{scores['rougeL']:>8.4f} {scores['bleu4']:>8.4f} {scores['bertscore']:>10.4f} {bleurt_str}")
 
-    print("-" * 90)
+    print("-" * 100)
 
     # Our models
     rows = []
     for model_key, results in all_results.items():
         rouge = results["rouge"]
         bs = results["bertscore"]
+        bleurt_val = results.get("bleurt")
+        bleurt_str = f"{bleurt_val:>8.4f}" if bleurt_val is not None else f"{'N/A':>8}"
         row_str = (f"{results['model_label']:<45} {rouge['rouge1']:>8.4f} {rouge['rouge2']:>8.4f} "
-                   f"{rouge['rougeL']:>8.4f} {results['bleu4']:>8.4f} {bs['f1']:>10.4f}")
+                   f"{rouge['rougeL']:>8.4f} {results['bleu4']:>8.4f} {bs['f1']:>10.4f} {bleurt_str}")
         print(row_str)
         rows.append({
             "Model": results["model_label"],
@@ -416,9 +474,10 @@ def generate_comparison_report(all_results: dict, project_root: Path):
             "ROUGE-L": rouge["rougeL"],
             "BLEU-4": results["bleu4"],
             "BERTScore F1": bs["f1"],
+            "BLEURT": bleurt_val,
         })
 
-    print(f"{'=' * 90}")
+    print(f"{'=' * 100}")
 
     # Save comparison
     comparison = {
@@ -427,6 +486,7 @@ def generate_comparison_report(all_results: dict, project_root: Path):
             "rouge": v["rouge"],
             "bleu4": v["bleu4"],
             "bertscore": v["bertscore"],
+            "bleurt": v.get("bleurt"),
             "per_type_rouge": v.get("per_type_rouge", {}),
         } for k, v in all_results.items()},
     }
@@ -486,7 +546,7 @@ def main():
     args = parser.parse_args()
 
     project_root = Path(args.project_root) if args.project_root else Path(__file__).resolve().parent.parent
-    device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Project root: {project_root}")
     print(f"Device: {device}")
 

@@ -27,6 +27,13 @@ echo "Project root: $PROJECT_ROOT"
 # Check GPU
 python3 -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}'); print(f'GPU: {torch.cuda.get_device_name(0)}' if torch.cuda.is_available() else 'No GPU')"
 
+# Log full GPU info
+if command -v nvidia-smi &> /dev/null; then
+    echo ""
+    echo "GPU Hardware Details:"
+    nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv
+fi
+
 echo ""
 echo "============================================================"
 echo "[1/3] Training FLAN-T5-small + LoRA"
@@ -34,12 +41,17 @@ echo "============================================================"
 python3 scripts/train_model.py --model flan-t5-small
 echo "[1/3] FLAN-T5-small COMPLETE at $(date)"
 
+# Clear GPU memory between runs
+python3 -c "import torch; torch.cuda.empty_cache() if torch.cuda.is_available() else None; print('GPU cache cleared')"
+
 echo ""
 echo "============================================================"
 echo "[2/3] Training FLAN-T5-base + LoRA"
 echo "============================================================"
 python3 scripts/train_model.py --model flan-t5-base
 echo "[2/3] FLAN-T5-base COMPLETE at $(date)"
+
+python3 -c "import torch; torch.cuda.empty_cache() if torch.cuda.is_available() else None; print('GPU cache cleared')"
 
 echo ""
 echo "============================================================"
@@ -50,17 +62,24 @@ echo "[3/3] T5-base COMPLETE at $(date)"
 
 echo ""
 echo "============================================================"
-echo "Generating comparative plots..."
+echo "Generating comparative training plots..."
 echo "============================================================"
 python3 scripts/plot_training_curves.py
 
 echo ""
 echo "============================================================"
-echo "ALL TRAINING COMPLETE"
+echo "Running evaluation on all trained models..."
+echo "============================================================"
+python3 scripts/evaluate_model.py --model all
+
+echo ""
+echo "============================================================"
+echo "ALL TRAINING + EVALUATION COMPLETE"
 echo "Finished: $(date)"
 echo "============================================================"
 echo ""
-echo "Next steps:"
-echo "  1. Run evaluation: python scripts/evaluate_model.py --model all"
-echo "  2. Check figures:   ls models/figures/"
-echo "  3. Check adapters:  ls models/*/adapter/"
+echo "Outputs:"
+echo "  Training figures:     ls models/figures/"
+echo "  LoRA adapters:        ls models/*/adapter/"
+echo "  Evaluation results:   ls evaluation_results/"
+echo "  Comparison JSON:      cat evaluation_results/model_comparison.json"

@@ -15,7 +15,7 @@ Usage:
 All models use identical LoRA configuration and hyperparameters for fair
 comparison. Training logs (CSV) and loss curves (PNG) are saved automatically.
 
-Designed for EC2 g5.2xlarge (NVIDIA A10G, 24GB VRAM) or Apple Silicon MPS.
+Designed for EC2 g5.2xlarge (NVIDIA A10G, 24GB VRAM).
 """
 
 import argparse
@@ -35,7 +35,7 @@ import matplotlib.pyplot as plt
 
 from datasets import load_from_disk
 from transformers import (
-    T5Tokenizer,
+    AutoTokenizer,
     T5ForConditionalGeneration,
     Seq2SeqTrainingArguments,
     Seq2SeqTrainer,
@@ -85,25 +85,36 @@ LORA_CONFIG = {
     "modules_to_save": ["embed_tokens", "lm_head"],
 }
 
+# Precision: bf16 on Ampere+ GPUs (A10G, A100), fp16 on older CUDA, fp32 on CPU.
+# bf16 has the same exponent range as fp32 — avoids loss scaling issues that fp16 can hit.
+if torch.cuda.is_available():
+    _ampere_or_newer = torch.cuda.get_device_capability()[0] >= 8
+    _USE_BF16 = _ampere_or_newer
+    _USE_FP16 = not _ampere_or_newer
+else:
+    _USE_BF16 = False
+    _USE_FP16 = False
+
 TRAINING_CONFIG = {
-    "learning_rate": 1e-4,
-    "per_device_train_batch_size": 8,
-    "per_device_eval_batch_size": 8,
-    "gradient_accumulation_steps": 2,  # effective batch = 16
-    "num_train_epochs": 10,  # upper bound; early stopping fires sooner
+    "learning_rate": 5e-5,
+    "per_device_train_batch_size": 16,   # A10G 24GB handles this for all 3 models
+    "per_device_eval_batch_size": 32,    # No gradients — larger batch for faster eval
+    "gradient_accumulation_steps": 1,    # Effective batch = 16 (same as before, less overhead)
+    "num_train_epochs": 10,              # Upper bound; early stopping fires sooner
     "lr_scheduler_type": "cosine",
-    "warmup_steps": 500,
+    "warmup_ratio": 0.06,                # ~6% warmup; adapts to total steps automatically
     "weight_decay": 0.01,
     "max_target_length": 80,
-    "fp16": torch.cuda.is_available(),  # only on CUDA; MPS uses fp32
+    "fp16": _USE_FP16,
+    "bf16": _USE_BF16,
     "seed": 42,
     "eval_num_beams": 4,
     "eval_do_sample": False,
     "logging_steps": 50,
     "eval_steps": 500,
     "save_steps": 500,
-    "early_stopping_patience": 5,
-    "early_stopping_threshold": 0.001,
+    "early_stopping_patience": 10,       # 10: ~5000 steps grace
+    "early_stopping_threshold": 0.0,     # ANY improvement resets patience
 }
 
 
@@ -182,9 +193,6 @@ def get_device() -> str:
         gpu_name = torch.cuda.get_device_name(0)
         vram = torch.cuda.get_device_properties(0).total_memory / 1e9
         print(f"  Device: {device} — {gpu_name} ({vram:.1f} GB VRAM)")
-    elif torch.backends.mps.is_available():
-        device = "mps"
-        print(f"  Device: {device} (Apple Silicon GPU)")
     else:
         device = "cpu"
         print(f"  Device: {device} (WARNING: training will be very slow)")
@@ -318,7 +326,7 @@ def train_model(model_key: str, project_root: Path):
     # ── Tokenizer ─────────────────────────────────────────────────────────
     tokenizer_path = data_dir / "tokenizer"
     print(f"\nLoading tokenizer from: {tokenizer_path}")
-    tokenizer = T5Tokenizer.from_pretrained(str(tokenizer_path), local_files_only=True)
+    tokenizer = AutoTokenizer.from_pretrained(str(tokenizer_path), local_files_only=True)
     print(f"  Vocabulary size: {len(tokenizer)} (includes [Question] token)")
 
     # ── Base Model ────────────────────────────────────────────────────────
@@ -334,6 +342,10 @@ def train_model(model_key: str, project_root: Path):
     model = get_peft_model(base_model, lora_config)
     model.enable_input_require_grads()
 
+    if device == "cuda":
+        model.gradient_checkpointing_enable()
+        print("  Gradient checkpointing enabled (saves ~40% VRAM)")
+
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total = model.num_parameters()
     trainable_pct = trainable / total * 100
@@ -345,7 +357,6 @@ def train_model(model_key: str, project_root: Path):
 
     def compute_metrics(eval_preds):
         predictions, labels = eval_preds
-        predictions = np.where(predictions != -100, predictions, tokenizer.pad_token_id)
         decoded_preds = tokenizer.batch_decode(predictions, skip_special_tokens=True)
         labels = np.where(labels != -100, labels, tokenizer.pad_token_id)
         decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
@@ -385,10 +396,12 @@ def train_model(model_key: str, project_root: Path):
         # Optimiser
         learning_rate=TRAINING_CONFIG["learning_rate"],
         weight_decay=TRAINING_CONFIG["weight_decay"],
-        warmup_steps=TRAINING_CONFIG["warmup_steps"],
+        warmup_ratio=TRAINING_CONFIG["warmup_ratio"],
         lr_scheduler_type=TRAINING_CONFIG["lr_scheduler_type"],
+        optim="adamw_torch_fused" if device == "cuda" else "adamw_torch",
         # Precision
         fp16=TRAINING_CONFIG["fp16"],
+        bf16=TRAINING_CONFIG["bf16"],
         # Checkpointing
         eval_strategy="steps",
         eval_steps=TRAINING_CONFIG["eval_steps"],
@@ -408,8 +421,9 @@ def train_model(model_key: str, project_root: Path):
         generation_num_beams=TRAINING_CONFIG["eval_num_beams"],
         # Reproducibility
         seed=TRAINING_CONFIG["seed"],
-        dataloader_num_workers=0 if device == "mps" else 4,
+        dataloader_num_workers=4,
         dataloader_pin_memory=device == "cuda",
+        gradient_checkpointing=device == "cuda",
     )
 
     # ── GPU Optimisations ─────────────────────────────────────────────────
@@ -443,7 +457,8 @@ def train_model(model_key: str, project_root: Path):
     print(f"  Learning rate:         {TRAINING_CONFIG['learning_rate']}")
     print(f"  LR scheduler:          {TRAINING_CONFIG['lr_scheduler_type']}")
     print(f"  Early stopping:        patience={TRAINING_CONFIG['early_stopping_patience']}")
-    print(f"  FP16:                  {TRAINING_CONFIG['fp16']}")
+    precision = "bf16" if TRAINING_CONFIG["bf16"] else "fp16" if TRAINING_CONFIG["fp16"] else "fp32"
+    print(f"  Precision:             {precision}")
 
     # ── Baseline Evaluation ───────────────────────────────────────────────
     print("\nRunning baseline evaluation (before fine-tuning)...")
@@ -457,7 +472,16 @@ def train_model(model_key: str, project_root: Path):
     print(f"\nStarting LoRA training for {model_info['description']}...")
     print("-" * 70)
     train_start = datetime.now()
-    train_result = trainer.train()
+
+    # Resume from last checkpoint if available
+    last_checkpoint = None
+    if checkpoint_path.exists():
+        checkpoints = sorted(checkpoint_path.glob("checkpoint-*"))
+        if checkpoints:
+            last_checkpoint = str(checkpoints[-1])
+            print(f"  Resuming from checkpoint: {last_checkpoint}")
+
+    train_result = trainer.train(resume_from_checkpoint=last_checkpoint)
     train_end = datetime.now()
     train_duration = (train_end - train_start).total_seconds()
 

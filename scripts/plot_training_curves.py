@@ -191,6 +191,40 @@ def plot_comparative_rougeL(models: dict, output_dir: Path):
     print(f"  Saved: {output_path}")
 
 
+def plot_learning_rate_schedules(models: dict, output_dir: Path):
+    """Plot learning rate schedules for all models."""
+    fig, ax = plt.subplots(figsize=(10, 6))
+    has_data = False
+
+    for label, data in models.items():
+        train_df = data["train"]
+        if train_df.empty or "learning_rate" not in train_df.columns:
+            continue
+
+        lr_col = pd.to_numeric(train_df["learning_rate"], errors="coerce").dropna()
+        if lr_col.empty:
+            continue
+
+        steps = train_df.loc[lr_col.index, "step"]
+        ax.plot(steps, lr_col, color=COLORS[label], linewidth=2, label=label)
+        has_data = True
+
+    if not has_data:
+        plt.close()
+        return
+
+    ax.set_xlabel("Training Step")
+    ax.set_ylabel("Learning Rate")
+    ax.set_title("Learning Rate Schedule (Cosine Annealing with Warmup)")
+    ax.legend(loc="upper right")
+    ax.ticklabel_format(axis="y", style="scientific", scilimits=(-4, -4))
+
+    output_path = output_dir / "comparative_learning_rate.png"
+    plt.savefig(output_path)
+    plt.close()
+    print(f"  Saved: {output_path}")
+
+
 def plot_overfitting_analysis(models: dict, output_dir: Path):
     """Plot training vs validation loss per model for overfitting detection."""
     n_models = len(models)
@@ -299,6 +333,7 @@ def main():
     plot_comparative_training_loss(models, output_dir)
     plot_comparative_validation_loss(models, output_dir)
     plot_comparative_rougeL(models, output_dir)
+    plot_learning_rate_schedules(models, output_dir)
     plot_overfitting_analysis(models, output_dir)
     generate_comparison_table(models, output_dir)
 
