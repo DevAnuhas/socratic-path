@@ -52,8 +52,11 @@ dependencies = [
 ]
 
 [tool.uv]
-# Torch ships its own CUDA wheels; point uv at the PyTorch index so it
-# resolves the right build for the target machine.
-# Override at install time with:  uv sync --index-url https://download.pytorch.org/whl/cu121
-index-url = "https://pypi.org/simple"
-extra-index-url = ["https://download.pytorch.org/whl/cpu"]
+
+[[tool.uv.index]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch" }
