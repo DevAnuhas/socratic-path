@@ -96,10 +96,10 @@ else:
 
 TRAINING_CONFIG = {
     "learning_rate": 1e-4,
-    "per_device_train_batch_size": 32,   # A10G 24GB: ~10GB for T5-small, ~18GB for T5-base
+    "per_device_train_batch_size": 16,   # Smaller batch → 2x more gradient updates per epoch
     "per_device_eval_batch_size": 64,    # No gradients — max batch for fastest eval
-    "gradient_accumulation_steps": 1,    # Effective batch = 32
-    "num_train_epochs": 5,               # Upper bound; early stopping fires sooner
+    "gradient_accumulation_steps": 1,    # Effective batch = 16
+    "num_train_epochs": 10,              # 10 epochs; cosine schedule needs headroom to learn
     "lr_scheduler_type": "cosine",
     "warmup_fraction": 0.06,             # ~6% warmup; converted to warmup_steps at runtime
     "weight_decay": 0.01,
@@ -112,7 +112,7 @@ TRAINING_CONFIG = {
     "logging_steps": 50,
     "eval_steps": 2000,
     "save_steps": 2000,
-    "early_stopping_patience": 3,        # 3 × 2000 = 6000 steps grace (~2 epochs)
+    "early_stopping_patience": 5,        # 5 × 2000 = 10000 steps grace (~2 epochs at batch=16)
     "early_stopping_threshold": 0.0,     # ANY improvement resets patience
 }
 

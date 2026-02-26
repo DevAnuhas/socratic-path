@@ -34,6 +34,17 @@ if command -v nvidia-smi &> /dev/null; then
     nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv
 fi
 
+# Clear stale checkpoints from previous runs (different config → can't resume)
+echo ""
+echo "Clearing stale checkpoints from previous training runs..."
+for model_dir in flan-t5-small-lora flan-t5-base-lora t5-base-lora; do
+    ckpt_dir="models/$model_dir/checkpoints"
+    if [ -d "$ckpt_dir" ] && ls "$ckpt_dir"/checkpoint-* 1>/dev/null 2>&1; then
+        echo "  Removing: $ckpt_dir/checkpoint-*"
+        rm -rf "$ckpt_dir"/checkpoint-*
+    fi
+done
+
 echo ""
 echo "============================================================"
 echo "[1/3] Training FLAN-T5-small + LoRA"
