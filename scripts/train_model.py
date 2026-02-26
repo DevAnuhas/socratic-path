@@ -347,6 +347,14 @@ def train_model(model_key: str, project_root: Path):
     print(f"  Trainable parameters: {trainable:,} / {total:,} ({trainable_pct:.2f}%)")
     print(f"  Parameter reduction:  {total / trainable:.0f}x fewer trainable parameters")
 
+    # ── Override generation config ────────────────────────────────────────
+    model.generation_config.max_length = TRAINING_CONFIG["max_target_length"]
+    model.generation_config.num_beams = TRAINING_CONFIG["eval_num_beams"]
+    model.generation_config.do_sample = TRAINING_CONFIG["eval_do_sample"]
+    model.generation_config.early_stopping = True
+    print(f"  Generation config: max_length={model.generation_config.max_length}, "
+          f"num_beams={model.generation_config.num_beams}")
+
     # ── Metrics ───────────────────────────────────────────────────────────
     rouge_metric = evaluate.load("rouge")
 

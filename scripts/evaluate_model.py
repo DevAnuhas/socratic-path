@@ -171,19 +171,29 @@ def compute_all_metrics(predictions: list, references: list, device: str):
     )
     bleu4 = bleu_result["score"] / 100.0
 
-    # BERTScore — using deberta-xlarge-mnli as recommended by the BERTScore
-    # authors for English text (higher correlation with human judgements than
-    # the default roberta-large). This matches the paper's evaluation setup.
-    print("  Computing BERTScore (deberta-xlarge-mnli, may take several minutes)...")
-    P, R, F1 = bert_score_fn(
-        predictions, references, lang="en", verbose=True, device=device,
-        model_type="microsoft/deberta-xlarge-mnli",
-    )
-    bertscore_results = {
-        "precision": P.mean().item(),
-        "recall": R.mean().item(),
-        "f1": F1.mean().item(),
-    }
+    # BERTScore — try deberta-xlarge-mnli first (best correlation with human
+    # judgements)
+    bertscore_results = None
+    F1 = None
+    for bs_model in ["microsoft/deberta-xlarge-mnli", "roberta-large"]:
+        try:
+            print(f"  Computing BERTScore ({bs_model})...")
+            P, R, F1 = bert_score_fn(
+                clean_preds, clean_refs, lang="en", verbose=True, device=device,
+                model_type=bs_model,
+            )
+            bertscore_results = {
+                "precision": P.mean().item(),
+                "recall": R.mean().item(),
+                "f1": F1.mean().item(),
+                "model": bs_model,
+            }
+            break
+        except (OverflowError, Exception) as e:
+            print(f"    BERTScore with {bs_model} failed: {e}")
+            if bs_model == "roberta-large":
+                print("    Skipping BERTScore entirely.")
+                F1 = torch.zeros(len(clean_preds))
 
     # BLEURT — learned metric that the paper reports alongside BERTScore.
     # Requires ~2GB checkpoint download on first run. Falls back gracefully
@@ -220,11 +230,11 @@ def compute_all_metrics(predictions: list, references: list, device: str):
     return {
         "rouge": rouge_results,
         "bleu4": bleu4,
-        "bertscore": bertscore_results,
+        "bertscore": bertscore_results or {"precision": 0, "recall": 0, "f1": 0},
         "bleurt": bleurt_score,
         "per_sample_rougeL": np.array(per_sample_rougeL),
         "per_sample_bleu": np.array(per_sample_bleu),
-        "per_sample_bertscore_f1": F1.numpy(),
+        "per_sample_bertscore_f1": F1.numpy() if F1 is not None else np.zeros(len(clean_preds)),
     }
 
 
