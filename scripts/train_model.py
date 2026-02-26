@@ -95,13 +95,13 @@ else:
     _USE_FP16 = False
 
 TRAINING_CONFIG = {
-    "learning_rate": 5e-5,
+    "learning_rate": 1e-4,
     "per_device_train_batch_size": 32,   # A10G 24GB: ~10GB for T5-small, ~18GB for T5-base
     "per_device_eval_batch_size": 64,    # No gradients — max batch for fastest eval
     "gradient_accumulation_steps": 1,    # Effective batch = 32
-    "num_train_epochs": 10,              # Upper bound; early stopping fires sooner
+    "num_train_epochs": 5,               # Upper bound; early stopping fires sooner
     "lr_scheduler_type": "cosine",
-    "warmup_fraction": 0.06,              # ~6% warmup; converted to warmup_steps at runtime
+    "warmup_fraction": 0.06,             # ~6% warmup; converted to warmup_steps at runtime
     "weight_decay": 0.01,
     "max_target_length": 80,
     "fp16": _USE_FP16,
@@ -110,9 +110,9 @@ TRAINING_CONFIG = {
     "eval_num_beams": 4,
     "eval_do_sample": False,
     "logging_steps": 50,
-    "eval_steps": 500,
-    "save_steps": 500,
-    "early_stopping_patience": 10,       # 10: ~5000 steps grace
+    "eval_steps": 2000,
+    "save_steps": 2000,
+    "early_stopping_patience": 3,        # 3 × 2000 = 6000 steps grace (~2 epochs)
     "early_stopping_threshold": 0.0,     # ANY improvement resets patience
 }
 
@@ -330,9 +330,7 @@ def train_model(model_key: str, project_root: Path):
 
     # ── Base Model ────────────────────────────────────────────────────────
     print(f"\nLoading base model: {hf_name}")
-    base_model = T5ForConditionalGeneration.from_pretrained(
-        hf_name, tie_word_embeddings=False,
-    )
+    base_model = T5ForConditionalGeneration.from_pretrained(hf_name)
     base_model.resize_token_embeddings(len(tokenizer))
     base_params = base_model.num_parameters()
     print(f"  Base model parameters: {base_params:,}")
@@ -433,7 +431,8 @@ def train_model(model_key: str, project_root: Path):
         seed=TRAINING_CONFIG["seed"],
         dataloader_num_workers=4,
         dataloader_pin_memory=device == "cuda",
-        gradient_checkpointing=device == "cuda",
+        # Gradient checkpointing: only for base-size models
+        gradient_checkpointing=(device == "cuda" and "small" not in model_key),
     )
 
     # ── GPU Optimisations ─────────────────────────────────────────────────
