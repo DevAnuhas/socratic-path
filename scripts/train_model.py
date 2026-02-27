@@ -79,6 +79,7 @@ LORA_CONFIG = {
     "r": 16,
     "lora_alpha": 32,
     "target_modules": ["q", "k", "v", "o", "wi_0", "wi_1", "wo"],
+    "modules_to_save": ["embed_tokens", "lm_head"],
     "lora_dropout": 0.1,
     "bias": "none",
     "task_type": TaskType.SEQ_2_SEQ_LM,
