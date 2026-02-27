@@ -79,6 +79,7 @@ LORA_CONFIG = {
     "r": 16,
     "lora_alpha": 32,  # scale = alpha/r = 2.0
     "target_modules": ["q", "k", "v", "o", "wi_0", "wi_1", "wo"],
+    "modules_to_save": ["shared", "lm_head"],
     "lora_dropout": 0.1,
     "bias": "none",
     "task_type": TaskType.SEQ_2_SEQ_LM,
@@ -95,7 +96,7 @@ else:
     _USE_FP16 = False
 
 TRAINING_CONFIG = {
-    "learning_rate": 1e-4,
+    "learning_rate": 3e-4,
     "per_device_train_batch_size": 16,   # Smaller batch → 2x more gradient updates per epoch
     "per_device_eval_batch_size": 64,    # No gradients — max batch for fastest eval
     "gradient_accumulation_steps": 1,    # Effective batch = 16
