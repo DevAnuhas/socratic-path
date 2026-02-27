@@ -5,7 +5,7 @@
 
 ---
 
-## 1. Model Selection (Supervisor Requirement)
+## 1. Model Selection
 
 **Requirement:** Train and compare at least 3 models with training loss graphs.
 
@@ -76,40 +76,69 @@ precision:            fp32 (fp16 causes NaN on MPS)
 early_stopping:       patience=5, threshold=0.001
 ```
 
-### Final Configuration (EC2, NVIDIA A10G)
+### EC2 Configuration — Run 2 (5 epochs, batch=32, UNDERFITTING)
 
 ```
-learning_rate:        5e-5
+learning_rate:        1e-4
 batch_size:           32 train / 64 eval
 gradient_accum:       1 (effective batch = 32)
-warmup_ratio:         0.06 (~6% of total steps)
+warmup_fraction:      0.06
+precision:            bf16
+optimizer:            adamw_torch_fused
+num_train_epochs:     5
+eval_steps:           2000
+early_stopping:       patience=3, threshold=0.0
+gradient_checkpointing: T5-small=off, T5-base=on
+```
+
+**Problem:** Both models were UNDERFITTING. Evidence:
+
+1. ROUGE-L still improving at final checkpoint (both models)
+2. Val loss still decreasing at final checkpoint (both models)
+3. Train loss > val loss (negative gap → regularisation working, no overfitting)
+4. Cosine LR decayed to ~0 by epoch 4.7, killing learning before convergence
+5. Only 13,215 gradient updates vs 52,860 in the MPS run (4x fewer)
+
+**Results (Run 2):** FLAN-T5-small RL=0.143, FLAN-T5-base RL=0.149 — both below paper baseline (0.211).
+
+### Final Configuration (EC2, NVIDIA A10G) — Run 3
+
+```
+learning_rate:        1e-4 (LoRA standard; paper's 5e-5 was for FULL fine-tuning)
+batch_size:           16 train / 64 eval
+gradient_accum:       1 (effective batch = 16)
+warmup_fraction:      0.06 (~6% of total steps, computed to warmup_steps at runtime)
 precision:            bf16 (Ampere GPU, compute capability ≥ 8)
 optimizer:            adamw_torch_fused
-early_stopping:       patience=10, threshold=0.0
-gradient_checkpointing: enabled (for T5-base memory savings)
+num_train_epochs:     10 (cosine schedule needs headroom — LR at epoch 10 ≈ 0)
+eval_steps:           2000 (was 500; eval beam search consumed 32% of total time)
+early_stopping:       patience=5, threshold=0.0
+gradient_checkpointing: T5-small=off, T5-base=on (saves memory for larger models)
 ```
 
 ### Change-by-Change Rationale
 
-#### 3.1 Learning Rate: 1e-4 → 5e-5
+#### 3.1 Learning Rate: kept at 1e-4
 
-- **Why:** 1e-4 is aggressive for fine-tuning a pre-trained model; risks catastrophic forgetting.
-  5e-5 is the standard LoRA fine-tuning rate (Hu et al., 2022) and gives more stable convergence.
+- **Why:** Hu et al. (2022) LoRA paper uses 1e-4 to 4e-4 for LoRA fine-tuning. The paper's
+  5e-5 was for FULL fine-tuning of t5-large (770M params, Appendix D). LoRA adapters need
+  higher LR because only ~3% of parameters are trainable — the effective gradient signal
+  per update is smaller, so a higher LR compensates.
 
-#### 3.2 Batch Size: 8/8 → 32/64
+#### 3.2 Batch Size: 8/8 → 32/64 → 16/64
 
-- **Why:** A10G has 24 GB VRAM. With T5-small + LoRA + bf16, GPU memory usage was only ~3.7 GB
-  (16% utilisation) at batch=16. Increasing to 32/64 better utilises the hardware.
-- **Impact:** Faster training (fewer gradient update steps per epoch), smoother loss curves due
-  to larger batch statistics.
-- **For T5-base:** May need to reduce batch to 16/32 due to 3x larger model. Gradient
-  checkpointing helps here.
+- **Run 2 (batch=32):** A10G has 24 GB VRAM. With T5-small + LoRA + bf16, GPU memory usage
+  was only ~3.7 GB (16% utilisation) at batch=16. Increasing to 32/64 improved utilisation.
+- **Run 3 (batch=16):** Reverted to batch=16 because the larger batch size was causing
+  underfitting — 2× fewer gradient updates per epoch means the cosine schedule exhausts the
+  useful LR range before the model converges. At batch=16 with 10 epochs, we get 52,860
+  total steps (matching the MPS run that achieved RL=0.27), versus only 13,215 at batch=32
+  with 5 epochs. The A10G still handles batch=16 at ~98% GPU utilisation.
 
 #### 3.3 Gradient Accumulation: 2 → 1
 
-- **Why:** With batch size doubled from 16→32, accumulation was no longer needed to reach a
-  reasonable effective batch size. Removing it reduces training time (no extra forward passes
-  between gradient updates).
+- **Why:** With batch=16 and no accumulation, effective batch = 16 (matching the successful
+  MPS run). Accumulation was removed to avoid unnecessary overhead.
 
 #### 3.4 Warmup: 500 steps → 6% ratio
 
@@ -127,16 +156,16 @@ gradient_checkpointing: enabled (for T5-base memory savings)
 - **MPS note:** Apple Silicon MPS does NOT support bf16 properly; the original MPS training
   used fp32 to avoid NaN losses caused by fp16.
 
-#### 3.6 Early Stopping: patience=5/threshold=0.001 → patience=10/threshold=0.0
+#### 3.6 Early Stopping: patience=5/threshold=0.001 → patience=5/threshold=0.0
 
 - **Why (threshold):** A threshold of 0.001 means any eval improvement < 0.001 ROUGE-L counts
   as "no improvement." For Socratic question generation, improvements are often gradual
   (e.g., +0.0005 per evaluation). The tight threshold was likely the cause of premature
   stopping in prior runs that showed "zero improvement." Setting to 0.0 means ANY improvement
   (however small) resets the patience counter.
-- **Why (patience):** With eval_steps=500, patience=5 gives only 2,500 steps of grace.
-  For T5-small with ~2,642 steps/epoch, this is < 1 epoch. Increasing to 10 gives
-  ~5,000 steps ≈ 2 epochs, allowing the model to recover from learning rate schedule dips.
+- **Why (patience):** With eval_steps=2000, patience=5 gives 10,000 steps of grace
+  (~2 epochs at batch=16). This allows the model to recover from learning rate schedule
+  dips and noisy eval metrics without stopping prematurely.
 
 #### 3.7 Optimizer: adamw_torch → adamw_torch_fused
 
@@ -157,10 +186,12 @@ gradient_checkpointing: enabled (for T5-base memory savings)
 
 - **Why:** TF32 (TensorFloat-32) uses the Tensor Cores on Ampere GPUs to perform fp32 matrix
   multiplications at near-bf16 speed with fp32-level precision for the exponent. Enabled via:
+
   ```python
   torch.backends.cuda.matmul.allow_tf32 = True
   torch.backends.cudnn.allow_tf32 = True
   ```
+
   This is a free performance boost with negligible precision loss.
 
 ---
@@ -210,7 +241,29 @@ precision training. The reduced precision causes gradient underflow in the T5 ar
 **Fix:** Disabled fp16 on MPS; trained in fp32. On EC2 (CUDA), switched to bf16 which
 has broader dynamic range and no such issues on Ampere GPUs.
 
-### 4.4 GPU Underutilisation (45% UTL, 16% VRAM)
+### 4.4 Evaluation ROUGE=0.0000 Bug (torch.cuda.amp.autocast)
+
+**Error:** `evaluate_model.py --model all` produced ROUGE-1/2/L = 0.0000 and BLEU-4 = 0.0000
+for all models, but BERTScore F1 = 0.816 (normal range).
+
+**Root cause:** The `generate_predictions()` function wrapped `model.generate()` in
+`torch.cuda.amp.autocast()`, which defaults to **fp16** precision. The models were trained
+with **bf16**. The fp16 autocast during inference caused numerical degradation of the LoRA
+adapter weights, producing degenerate output (every prediction was just a comma `","`).
+
+**Diagnosis:** Inspecting `test_predictions.csv` revealed all 10,573 predictions were the
+single character `,`. The model was outputting `[Question],</s>` — the learned start token
+followed by garbage. BERTScore still showed ~0.82 because it uses contextual embeddings where
+even degenerate short text gets a non-trivial baseline similarity score.
+
+**Fix (two-part):**
+
+1. Removed `torch.cuda.amp.autocast()` from inference — generation runs in native precision.
+2. Changed `load_model()` to prefer the merged model (`models/*/merged/`) over base+adapter
+   loading. The merged model has LoRA weights baked in, avoiding PEFT adapter loading edge
+   cases entirely. Falls back to adapter loading if no merged model exists.
+
+### 4.5 GPU Underutilisation (45% UTL, 16% VRAM)
 
 **Observation (via nvitop):** With T5-small at batch=16 + gradient checkpointing:
 
@@ -221,10 +274,12 @@ has broader dynamic range and no such issues on Ampere GPUs.
 
 1. Gradient checkpointing adds overhead (recomputing activations) that is unnecessary for
    T5-small — the model fits easily in memory without it.
-2. Batch size 16 is too small for the available VRAM.
+2. Batch size 16 at the time had gradient checkpointing enabled, adding overhead.
 
-**Fix:** Increased batch to 32 train / 64 eval. Kept gradient checkpointing as a
-`TrainingArguments` flag (needed for T5-base) rather than manual call.
+**Fix:** Disabled gradient checkpointing for T5-small. GPU utilisation rose to 98%.
+Final batch=16 (Run 3) is chosen for convergence reasons (more gradient updates) rather
+than GPU utilisation — the trade-off is correct because the A10G still runs at ~98% UTL
+without gradient checkpointing at batch=16.
 
 ---
 
@@ -275,7 +330,92 @@ the base model still has shape `(32100, d_model)`, causing a `RuntimeError: shap
 
 ---
 
-## 7. Paper Baseline Comparison
+## 7. Underfitting Analysis (Run 2 — 5 epochs, batch=32)
+
+### Evidence of Underfitting
+
+Both FLAN-T5-small and FLAN-T5-base showed clear underfitting at the end of Run 2:
+
+| Indicator                 | FLAN-T5-small           | FLAN-T5-base            | Verdict      |
+| ------------------------- | ----------------------- | ----------------------- | ------------ |
+| ROUGE-L at final eval     | 0.1430 (step 12000)     | 0.1490 (step 10000)     | Still rising |
+| Val loss at final eval    | 4.866 (still decreasing)| 5.145 (still decreasing)| Still falling|
+| Train–val loss gap        | −0.74 (train > val)     | −1.10 (train > val)     | No overfit   |
+| LR at final useful step   | 2.36e-6 at step 12000  | 2.36e-6 at step 12000  | Near-zero    |
+| LR effectively dead       | Step 12450 (epoch 4.7)  | Step 12450 (epoch 4.7)  | 0.3 ep wasted|
+
+**Key insight:** The cosine LR schedule decays to zero at `num_train_epochs`. With only
+5 epochs, the model had useful learning rate for ~4.7 epochs. But ROUGE-L was still
+improving at epoch 4.5 — the LR died before convergence.
+
+### Gradient Update Deficit
+
+| Config       | Effective Batch | Epochs | Steps/Epoch | Total Steps | Useful Steps (LR > 1e-6) |
+| ------------ | --------------- | ------ | ----------- | ----------- | ------------------------- |
+| MPS (prior)  | 16              | 10     | 5,286       | 52,860      | ~37,000                   |
+| EC2 Run 2    | 32              | 5      | 2,643       | 13,215      | ~12,450                   |
+| EC2 Run 3    | 16              | 10     | 5,286       | 52,860      | ~37,000                   |
+
+The MPS run had **3× more useful gradient updates** than EC2 Run 2. This directly explains
+the ROUGE-L gap (0.27 vs 0.14).
+
+### Fix for Run 3
+
+1. `num_train_epochs`: 5 → 10 (match MPS, give cosine schedule room)
+2. `per_device_train_batch_size`: 32 → 16 (2× more updates per epoch)
+3. `early_stopping_patience`: 3 → 5 (10,000 steps grace ≈ 2 epochs at batch=16)
+
+Combined effect: 52,860 total steps (4× more than Run 2), matching the MPS run that
+achieved ROUGE-L = 0.27.
+
+---
+
+## 8. Evaluation Results (Run 2)
+
+### Corpus-Level Metrics
+
+| Model                       | ROUGE-1 | ROUGE-2 | ROUGE-L | BLEU-4 | BERTScore F1 |
+| --------------------------- | ------- | ------- | ------- | ------ | ------------ |
+| Paper: T5-p (prompt-based)  | 0.172   | 0.017   | 0.211   | 0.017  | 0.632        |
+| Paper: ProphetNet-p         | 0.178   | 0.018   | 0.208   | 0.018  | 0.632        |
+| Paper: GPT-p (prompt-based) | 0.165   | 0.013   | 0.187   | 0.013  | 0.615        |
+| Our FLAN-T5-small + LoRA    | 0.150   | 0.029   | 0.145   | 0.012  | **0.849**    |
+| Our FLAN-T5-base + LoRA     | 0.162   | 0.030   | 0.152   | 0.015  | **0.864**    |
+
+**Observation:** ROUGE-L is below paper baselines (underfitting — see §7), but BERTScore
+massively exceeds paper (0.85–0.86 vs 0.63). This means our models generate semantically
+relevant questions but with different surface wording than the references.
+
+### Per-Question-Type ROUGE-L
+
+| Question Type                    | Count | Small RL | Base RL |
+| -------------------------------- | ----- | -------- | ------- |
+| assumptions                      | 75    | 0.188    | 0.167   |
+| reasons_evidence                 | 3,746 | 0.180    | 0.170   |
+| clarity                          | 3,593 | 0.150    | 0.149   |
+| implication_consequences         | 2,517 | 0.096    | 0.131   |
+| alternate_viewpoints_perspectives| 642   | 0.093    | 0.141   |
+
+### Prediction Diversity Problem
+
+| Model          | Unique Predictions | Total | % Unique |
+| -------------- | ------------------ | ----- | -------- |
+| FLAN-T5-small  | 508                | 10,573| 4.8%     |
+| FLAN-T5-base   | 1,253              | 10,573| 11.8%    |
+
+**Root cause:** Beam search (num_beams=4, do_sample=False) is deterministic. With
+underfitted models that haven't learned context-specific patterns, the decoder repeatedly
+selects the same high-probability generic templates (e.g., "What do you think...",
+"What do you mean?"). Training for more epochs should increase diversity as the model
+learns finer-grained context conditioning.
+
+**Thesis note:** Low diversity is a symptom of underfitting, not a separate problem.
+As the model trains longer, it learns to condition on the input context more specifically,
+producing more varied outputs. This will be verified in Run 3.
+
+---
+
+## 9. Paper Baseline Comparison
 
 From Ang et al. (2023, EACL) — SocratiQ dataset, Table 3:
 
@@ -284,14 +424,15 @@ From Ang et al. (2023, EACL) — SocratiQ dataset, Table 3:
 | T5-p (prompt-based)                    | 0.211     | 0.632     | 0.017  |
 | ProphetNet-p (prompt)                  | 0.208     | 0.632     | 0.018  |
 | GPT-p (prompt-based)                   | 0.187     | 0.615     | 0.013  |
-| **Our FLAN-T5-small LoRA (prior run)** | **0.273** | —         | —      |
+| **Our FLAN-T5-small LoRA (MPS, 10ep)** | **0.273** | —         | —      |
 
-Our FLAN-T5-small already exceeds the paper's best ROUGE-L by +0.062 (29% relative
-improvement) despite being the smallest model variant tested.
+The MPS run (10 epochs, batch=16) exceeded the paper's best ROUGE-L by +0.062 (29%
+relative improvement). The EC2 Run 3 config matches the MPS gradient update count and
+is expected to recover this performance level.
 
 ---
 
-## 8. Hardware & Environment
+## 10. Hardware & Environment
 
 | Component       | Specification                                            |
 | --------------- | -------------------------------------------------------- |
