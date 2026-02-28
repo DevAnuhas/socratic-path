@@ -106,7 +106,7 @@ TRAINING_CONFIG = {
     "gradient_accumulation_steps": 1,    # Effective batch = 16
     "num_train_epochs": 10,              # 10 epochs; cosine schedule needs headroom to learn
     "lr_scheduler_type": "cosine",
-    "warmup_fraction": 0.06,             # ~6% warmup; converted to warmup_steps at runtime
+    "warmup_steps": 500,                 # Fixed 500 steps — must be short with modules_to_save
     "weight_decay": 0.01,
     "max_target_length": 80,
     "fp16": _USE_FP16,
@@ -115,10 +115,10 @@ TRAINING_CONFIG = {
     "eval_num_beams": 4,
     "eval_do_sample": False,
     "logging_steps": 50,
-    "eval_steps": 2000,
-    "save_steps": 2000,
-    "early_stopping_patience": 5,        # 5 × 2000 = 10000 steps grace (~2 epochs at batch=16)
-    "early_stopping_threshold": 0.0,     # ANY improvement resets patience
+    "eval_steps": 500,
+    "save_steps": 500,
+    "early_stopping_patience": 5,        # 5 × 500 = 2500 steps grace
+    "early_stopping_threshold": 0.001,   # Must improve by 0.001 to reset patience
 }
 
 
@@ -399,15 +399,15 @@ def train_model(model_key: str, project_root: Path):
     timestamp = datetime.now().strftime("%Y%m%d-%H%M")
     run_name = f"{output_dir_name}-{timestamp}"
 
-    # Compute warmup_steps from fraction
+    # Compute total steps for logging
     train_samples = len(dataset["train"])
     batch = TRAINING_CONFIG["per_device_train_batch_size"]
     accum = TRAINING_CONFIG["gradient_accumulation_steps"]
     steps_per_epoch = (train_samples + batch - 1) // batch // accum
     total_steps = steps_per_epoch * TRAINING_CONFIG["num_train_epochs"]
-    warmup_steps = int(total_steps * TRAINING_CONFIG["warmup_fraction"])
+    warmup_steps = TRAINING_CONFIG["warmup_steps"]
     print(f"\n  Total training steps:  {total_steps:,}")
-    print(f"  Warmup steps:          {warmup_steps} ({TRAINING_CONFIG['warmup_fraction']:.0%} of total)")
+    print(f"  Warmup steps:          {warmup_steps} (fixed)")
 
     # Set tensorboard dir via env var
     os.environ["TENSORBOARD_LOGGING_DIR"] = str(log_dir / "tensorboard")
