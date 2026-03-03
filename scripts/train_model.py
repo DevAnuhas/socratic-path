@@ -35,7 +35,7 @@ import matplotlib.pyplot as plt
 
 from datasets import load_from_disk
 from transformers import (
-    AutoTokenizer,
+    T5Tokenizer,
     T5ForConditionalGeneration,
     Seq2SeqTrainingArguments,
     Seq2SeqTrainer,
@@ -77,32 +77,35 @@ MODEL_REGISTRY = {
 
 LORA_CONFIG = {
     "r": 16,
-    "lora_alpha": 32,  # scale = alpha/r = 2.0
-    "target_modules": ["q", "k", "v", "o", "wi_0", "wi_1", "wo"],
+    "lora_alpha": 32,
+    "target_modules": ["q", "k", "v", "o"],
     "lora_dropout": 0.1,
     "bias": "none",
     "task_type": TaskType.SEQ_2_SEQ_LM,
-    "modules_to_save": ["embed_tokens", "lm_head"],
 }
 
-# Precision: bf16 on Ampere+ GPUs (A10G, A100), fp16 on older CUDA, fp32 on CPU.
+# Precision: bf16 on Ampere+ GPUs (A10G, A100), fp16 on older CUDA, fp32 on CPU/MPS.
 # bf16 has the same exponent range as fp32 — avoids loss scaling issues that fp16 can hit.
+# MPS does not support bf16; Trainer's fp16 relies on CUDA AMP so use fp32 on MPS.
 if torch.cuda.is_available():
     _ampere_or_newer = torch.cuda.get_device_capability()[0] >= 8
     _USE_BF16 = _ampere_or_newer
     _USE_FP16 = not _ampere_or_newer
+elif torch.backends.mps.is_available():
+    _USE_BF16 = False
+    _USE_FP16 = False
 else:
     _USE_BF16 = False
     _USE_FP16 = False
 
 TRAINING_CONFIG = {
-    "learning_rate": 5e-5,
-    "per_device_train_batch_size": 16,   # A10G 24GB handles this for all 3 models
-    "per_device_eval_batch_size": 32,    # No gradients — larger batch for faster eval
-    "gradient_accumulation_steps": 1,    # Effective batch = 16 (same as before, less overhead)
-    "num_train_epochs": 10,              # Upper bound; early stopping fires sooner
+    "learning_rate": 1e-4,
+    "per_device_train_batch_size": 16,   # Smaller batch → 2x more gradient updates per epoch
+    "per_device_eval_batch_size": 64,    # No gradients — max batch for fastest eval
+    "gradient_accumulation_steps": 1,    # Effective batch = 16
+    "num_train_epochs": 10,              # 10 epochs; cosine schedule needs headroom to learn
     "lr_scheduler_type": "cosine",
-    "warmup_ratio": 0.06,                # ~6% warmup; adapts to total steps automatically
+    "warmup_steps": 500,                 # Fixed 500-step linear warmup
     "weight_decay": 0.01,
     "max_target_length": 80,
     "fp16": _USE_FP16,
@@ -113,8 +116,8 @@ TRAINING_CONFIG = {
     "logging_steps": 50,
     "eval_steps": 500,
     "save_steps": 500,
-    "early_stopping_patience": 10,       # 10: ~5000 steps grace
-    "early_stopping_threshold": 0.0,     # ANY improvement resets patience
+    "early_stopping_patience": 5,        # 5 × 500 = 2500 steps grace
+    "early_stopping_threshold": 0.001,   # Must improve by 0.001 to reset patience
 }
 
 
@@ -184,6 +187,8 @@ def set_seed(seed: int):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
         torch.backends.cudnn.deterministic = True
+    if torch.backends.mps.is_available():
+        torch.mps.manual_seed(seed)
 
 
 def get_device() -> str:
@@ -193,6 +198,9 @@ def get_device() -> str:
         gpu_name = torch.cuda.get_device_name(0)
         vram = torch.cuda.get_device_properties(0).total_memory / 1e9
         print(f"  Device: {device} — {gpu_name} ({vram:.1f} GB VRAM)")
+    elif torch.backends.mps.is_available():
+        device = "mps"
+        print("  Device: mps — Apple Silicon GPU (unified memory)")
     else:
         device = "cpu"
         print(f"  Device: {device} (WARNING: training will be very slow)")
@@ -326,13 +334,12 @@ def train_model(model_key: str, project_root: Path):
     # ── Tokenizer ─────────────────────────────────────────────────────────
     tokenizer_path = data_dir / "tokenizer"
     print(f"\nLoading tokenizer from: {tokenizer_path}")
-    tokenizer = AutoTokenizer.from_pretrained(str(tokenizer_path), local_files_only=True)
+    tokenizer = T5Tokenizer.from_pretrained(str(tokenizer_path), local_files_only=True)
     print(f"  Vocabulary size: {len(tokenizer)} (includes [Question] token)")
 
     # ── Base Model ────────────────────────────────────────────────────────
     print(f"\nLoading base model: {hf_name}")
     base_model = T5ForConditionalGeneration.from_pretrained(hf_name)
-    base_model.resize_token_embeddings(len(tokenizer))
     base_params = base_model.num_parameters()
     print(f"  Base model parameters: {base_params:,}")
 
@@ -342,21 +349,26 @@ def train_model(model_key: str, project_root: Path):
     model = get_peft_model(base_model, lora_config)
     model.enable_input_require_grads()
 
-    if device == "cuda":
-        model.gradient_checkpointing_enable()
-        print("  Gradient checkpointing enabled (saves ~40% VRAM)")
-
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total = model.num_parameters()
     trainable_pct = trainable / total * 100
     print(f"  Trainable parameters: {trainable:,} / {total:,} ({trainable_pct:.2f}%)")
     print(f"  Parameter reduction:  {total / trainable:.0f}x fewer trainable parameters")
 
+    # ── Override generation config ────────────────────────────────────────
+    model.generation_config.max_length = TRAINING_CONFIG["max_target_length"]
+    model.generation_config.num_beams = TRAINING_CONFIG["eval_num_beams"]
+    model.generation_config.do_sample = TRAINING_CONFIG["eval_do_sample"]
+    model.generation_config.early_stopping = True
+    print(f"  Generation config: max_length={model.generation_config.max_length}, "
+          f"num_beams={model.generation_config.num_beams}")
+
     # ── Metrics ───────────────────────────────────────────────────────────
     rouge_metric = evaluate.load("rouge")
 
     def compute_metrics(eval_preds):
         predictions, labels = eval_preds
+        predictions = np.where(predictions != -100, predictions, tokenizer.pad_token_id)
         decoded_preds = tokenizer.batch_decode(predictions, skip_special_tokens=True)
         labels = np.where(labels != -100, labels, tokenizer.pad_token_id)
         decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
@@ -385,19 +397,36 @@ def train_model(model_key: str, project_root: Path):
     timestamp = datetime.now().strftime("%Y%m%d-%H%M")
     run_name = f"{output_dir_name}-{timestamp}"
 
+    # Compute total steps for logging
+    train_samples = len(dataset["train"])
+    batch = TRAINING_CONFIG["per_device_train_batch_size"]
+    accum = TRAINING_CONFIG["gradient_accumulation_steps"]
+    steps_per_epoch = (train_samples + batch - 1) // batch // accum
+    total_steps = steps_per_epoch * TRAINING_CONFIG["num_train_epochs"]
+    warmup_steps = TRAINING_CONFIG["warmup_steps"]
+    print(f"\n  Total training steps:  {total_steps:,}")
+    print(f"  Warmup steps:          {warmup_steps} (fixed)")
+
+    # Set tensorboard dir via env var
+    os.environ["TENSORBOARD_LOGGING_DIR"] = str(log_dir / "tensorboard")
+
+    _is_mps = device == "mps"
+
     training_args = Seq2SeqTrainingArguments(
         output_dir=str(checkpoint_path),
         run_name=run_name,
         # Epochs & batch
         num_train_epochs=TRAINING_CONFIG["num_train_epochs"],
         per_device_train_batch_size=TRAINING_CONFIG["per_device_train_batch_size"],
-        per_device_eval_batch_size=TRAINING_CONFIG["per_device_eval_batch_size"],
+        # MPS unified memory is shared with the OS; 64 is too aggressive → cap at 16
+        per_device_eval_batch_size=16 if _is_mps else TRAINING_CONFIG["per_device_eval_batch_size"],
         gradient_accumulation_steps=TRAINING_CONFIG["gradient_accumulation_steps"],
         # Optimiser
         learning_rate=TRAINING_CONFIG["learning_rate"],
         weight_decay=TRAINING_CONFIG["weight_decay"],
-        warmup_ratio=TRAINING_CONFIG["warmup_ratio"],
+        warmup_steps=warmup_steps,
         lr_scheduler_type=TRAINING_CONFIG["lr_scheduler_type"],
+        # adamw_torch_fused is CUDA-only
         optim="adamw_torch_fused" if device == "cuda" else "adamw_torch",
         # Precision
         fp16=TRAINING_CONFIG["fp16"],
@@ -412,7 +441,6 @@ def train_model(model_key: str, project_root: Path):
         metric_for_best_model="rougeL",
         greater_is_better=True,
         # Logging
-        logging_dir=str(log_dir / "tensorboard"),
         logging_steps=TRAINING_CONFIG["logging_steps"],
         report_to="tensorboard",
         # Generation (evaluation only)
@@ -421,9 +449,12 @@ def train_model(model_key: str, project_root: Path):
         generation_num_beams=TRAINING_CONFIG["eval_num_beams"],
         # Reproducibility
         seed=TRAINING_CONFIG["seed"],
-        dataloader_num_workers=4,
+        # MPS + fork-based DataLoader workers causes crashes on macOS
+        dataloader_num_workers=0 if _is_mps else 4,
         dataloader_pin_memory=device == "cuda",
-        gradient_checkpointing=device == "cuda",
+        # Gradient checkpointing: only for base-size CUDA models; can produce wrong
+        # gradients with LoRA on MPS
+        gradient_checkpointing=(device == "cuda" and "small" not in model_key),
     )
 
     # ── GPU Optimisations ─────────────────────────────────────────────────
@@ -432,6 +463,9 @@ def train_model(model_key: str, project_root: Path):
         torch.backends.cudnn.allow_tf32 = True
         torch.cuda.empty_cache()
         print("  TF32 enabled for faster training on Ampere GPUs")
+    elif device == "mps":
+        torch.mps.empty_cache()
+        print("  MPS cache cleared")
 
     # ── Callbacks ─────────────────────────────────────────────────────────
     training_logger = TrainingLogger(log_dir)
