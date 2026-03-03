@@ -81,12 +81,27 @@ PAPER_BASELINES = {
 
 
 def load_model(model_key: str, project_root: Path, device: str):
-    """Load a trained model following the critical load sequence."""
+    """Load a trained model, preferring the merged model if available."""
     model_info = MODEL_REGISTRY[model_key]
-    adapter_path = project_root / "models" / model_info["output_dir"] / "adapter"
+    model_dir = project_root / "models" / model_info["output_dir"]
+    merged_path = model_dir / "merged"
+    adapter_path = model_dir / "adapter"
 
+    # Prefer merged model (LoRA already baked in — simpler, more reliable)
+    if (merged_path / "model.safetensors").exists():
+        print(f"  Loading merged model from: {merged_path}")
+        tokenizer = AutoTokenizer.from_pretrained(str(merged_path))
+        model = T5ForConditionalGeneration.from_pretrained(str(merged_path))
+        model = model.to(device)
+        model.eval()
+        print(f"  Model loaded (merged): {model.num_parameters():,} params on {device}")
+        return model, tokenizer
+
+    # Fallback: base model + LoRA adapter
     if not adapter_path.exists():
-        raise FileNotFoundError(f"No adapter found at {adapter_path}. Train the model first.")
+        raise FileNotFoundError(
+            f"No model found at {merged_path} or {adapter_path}. Train the model first."
+        )
 
     print(f"  Loading tokenizer from: {adapter_path}")
     tokenizer = AutoTokenizer.from_pretrained(str(adapter_path))
@@ -102,7 +117,7 @@ def load_model(model_key: str, project_root: Path, device: str):
     model = model.to(device)
     model.eval()
 
-    print(f"  Model loaded: {model.num_parameters():,} params on {device}")
+    print(f"  Model loaded (adapter): {model.num_parameters():,} params on {device}")
     return model, tokenizer
 
 
@@ -123,7 +138,6 @@ def generate_predictions(model, tokenizer, test_df: pd.DataFrame, device: str,
 
     # Process in batches
     num_batches = (len(input_texts) + batch_size - 1) // batch_size
-    use_amp = device == "cuda"
 
     for i in tqdm(range(0, len(input_texts), batch_size),
                   total=num_batches, desc="Generating"):
@@ -135,11 +149,7 @@ def generate_predictions(model, tokenizer, test_df: pd.DataFrame, device: str,
         inputs = {k: v.to(device) for k, v in inputs.items()}
 
         with torch.no_grad():
-            if use_amp:
-                with torch.cuda.amp.autocast():
-                    outputs = model.generate(**inputs, **EVAL_GENERATION_CONFIG)
-            else:
-                outputs = model.generate(**inputs, **EVAL_GENERATION_CONFIG)
+            outputs = model.generate(**inputs, **EVAL_GENERATION_CONFIG)
 
         decoded = tokenizer.batch_decode(outputs, skip_special_tokens=True)
         decoded = [d.replace("[Question]", "").strip() for d in decoded]
@@ -171,19 +181,29 @@ def compute_all_metrics(predictions: list, references: list, device: str):
     )
     bleu4 = bleu_result["score"] / 100.0
 
-    # BERTScore — using deberta-xlarge-mnli as recommended by the BERTScore
-    # authors for English text (higher correlation with human judgements than
-    # the default roberta-large). This matches the paper's evaluation setup.
-    print("  Computing BERTScore (deberta-xlarge-mnli, may take several minutes)...")
-    P, R, F1 = bert_score_fn(
-        predictions, references, lang="en", verbose=True, device=device,
-        model_type="microsoft/deberta-xlarge-mnli",
-    )
-    bertscore_results = {
-        "precision": P.mean().item(),
-        "recall": R.mean().item(),
-        "f1": F1.mean().item(),
-    }
+    # BERTScore — try deberta-xlarge-mnli first (best correlation with human
+    # judgements)
+    bertscore_results = None
+    F1 = None
+    for bs_model in ["microsoft/deberta-xlarge-mnli", "roberta-large"]:
+        try:
+            print(f"  Computing BERTScore ({bs_model})...")
+            P, R, F1 = bert_score_fn(
+                clean_preds, clean_refs, lang="en", verbose=True, device=device,
+                model_type=bs_model,
+            )
+            bertscore_results = {
+                "precision": P.mean().item(),
+                "recall": R.mean().item(),
+                "f1": F1.mean().item(),
+                "model": bs_model,
+            }
+            break
+        except (OverflowError, Exception) as e:
+            print(f"    BERTScore with {bs_model} failed: {e}")
+            if bs_model == "roberta-large":
+                print("    Skipping BERTScore entirely.")
+                F1 = torch.zeros(len(clean_preds))
 
     # BLEURT — learned metric that the paper reports alongside BERTScore.
     # Requires ~2GB checkpoint download on first run. Falls back gracefully
@@ -220,11 +240,11 @@ def compute_all_metrics(predictions: list, references: list, device: str):
     return {
         "rouge": rouge_results,
         "bleu4": bleu4,
-        "bertscore": bertscore_results,
+        "bertscore": bertscore_results or {"precision": 0, "recall": 0, "f1": 0},
         "bleurt": bleurt_score,
         "per_sample_rougeL": np.array(per_sample_rougeL),
         "per_sample_bleu": np.array(per_sample_bleu),
-        "per_sample_bertscore_f1": F1.numpy(),
+        "per_sample_bertscore_f1": F1.numpy() if F1 is not None else np.zeros(len(clean_preds)),
     }
 
 
@@ -356,6 +376,22 @@ def evaluate_single_model(model_key: str, project_root: Path, device: str):
     data_path = project_root / "datasets" / "processed"
     test_df = pd.read_parquet(data_path / "test_formatted.parquet")
     print(f"\n  Test samples: {len(test_df)}")
+
+    # Sanity check: generate a single sample and print it
+    print("\n  Sanity check — single sample generation:")
+    _sample_input = test_df.iloc[0]["input_text"]
+    _sample_ref = test_df.iloc[0].get("original_target", test_df.iloc[0]["target_text"])
+    _tok = tokenizer(_sample_input, return_tensors="pt", max_length=400, truncation=True)
+    _tok = {k: v.to(device) for k, v in _tok.items()}
+    with torch.no_grad():
+        _out = model.generate(**_tok, **EVAL_GENERATION_CONFIG)
+    _decoded = tokenizer.decode(_out[0], skip_special_tokens=True)
+    print(f"    Input:      {_sample_input[:120]}...")
+    print(f"    Reference:  {_sample_ref}")
+    print(f"    Raw output: {_decoded}")
+    print(f"    Cleaned:    {_decoded.replace('[Question]', '').strip()}")
+    if _decoded.replace('[Question]', '').strip() in ('', ',', '.'):
+        print("    WARNING: Model producing degenerate output! Check adapter loading.")
 
     # Generate predictions
     print("\n  Generating predictions...")
