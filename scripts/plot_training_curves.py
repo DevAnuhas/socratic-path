@@ -54,7 +54,6 @@ plt.rcParams.update({
     "legend.fontsize": 10,
     "figure.dpi": 150,
     "savefig.dpi": 300,
-    "savefig.bbox_inches": "tight",
     "figure.facecolor": "white",
     "axes.facecolor": "white",
     "axes.grid": True,
@@ -120,7 +119,7 @@ def plot_comparative_training_loss(models: dict, output_dir: Path):
     ax.legend(loc="upper right")
 
     output_path = output_dir / "comparative_training_loss.png"
-    plt.savefig(output_path)
+    plt.savefig(output_path, bbox_inches="tight")
     plt.close()
     print(f"  Saved: {output_path}")
 
@@ -151,7 +150,7 @@ def plot_comparative_validation_loss(models: dict, output_dir: Path):
     ax.legend(loc="upper right")
 
     output_path = output_dir / "comparative_validation_loss.png"
-    plt.savefig(output_path)
+    plt.savefig(output_path, bbox_inches="tight")
     plt.close()
     print(f"  Saved: {output_path}")
 
@@ -186,7 +185,7 @@ def plot_comparative_rougeL(models: dict, output_dir: Path):
     ax.legend(loc="lower right")
 
     output_path = output_dir / "comparative_rougeL.png"
-    plt.savefig(output_path)
+    plt.savefig(output_path, bbox_inches="tight")
     plt.close()
     print(f"  Saved: {output_path}")
 
@@ -220,7 +219,7 @@ def plot_learning_rate_schedules(models: dict, output_dir: Path):
     ax.ticklabel_format(axis="y", style="scientific", scilimits=(-4, -4))
 
     output_path = output_dir / "comparative_learning_rate.png"
-    plt.savefig(output_path)
+    plt.savefig(output_path, bbox_inches="tight")
     plt.close()
     print(f"  Saved: {output_path}")
 
@@ -266,7 +265,7 @@ def plot_overfitting_analysis(models: dict, output_dir: Path):
     plt.tight_layout()
 
     output_path = output_dir / "comparative_overfitting.png"
-    plt.savefig(output_path)
+    plt.savefig(output_path, bbox_inches="tight")
     plt.close()
     print(f"  Saved: {output_path}")
 
