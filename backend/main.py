@@ -4,10 +4,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from services.keyphrase import KeyphraseService
-from services.wikipedia import WikipediaService
-from services.question_gen import QuestionGenerationService
-from routes import generate
+from backend.services.keyphrase import KeyphraseService
+from backend.services.wikipedia import WikipediaService
+from backend.services.question_gen import QuestionGenerationService
+from backend.routes import generate
 
 logging.basicConfig(
     level=logging.INFO,

@@ -5,7 +5,7 @@ from typing import List
 
 from fastapi import APIRouter, HTTPException
 
-from schemas.models import (
+from backend.schemas.models import (
     VALID_QUESTION_TYPES,
     GenerateRequest,
     GenerateResponse,
@@ -13,9 +13,9 @@ from schemas.models import (
     ContextSource,
     Question,
 )
-from services.keyphrase import KeyphraseService
-from services.wikipedia import WikipediaService
-from services.question_gen import QuestionGenerationService
+from backend.services.keyphrase import KeyphraseService
+from backend.services.wikipedia import WikipediaService
+from backend.services.question_gen import QuestionGenerationService
 
 logger = logging.getLogger(__name__)
 
@@ -53,27 +53,45 @@ async def generate_questions(request: GenerateRequest):
 
     t0 = time.time()
 
-    # Step 1: Extract keyphrases
-    raw_keyphrases = keyphrase_service.extract(request.topic, top_n=5)
+    # Step 1: Extract keyphrases (graceful fallback to raw topic)
+    try:
+        raw_keyphrases = keyphrase_service.extract(request.topic, top_n=5)
+    except Exception as exc:
+        logger.warning("Keyphrase extraction failed, using raw topic: %s", exc)
+        raw_keyphrases = [(request.topic.strip(), 1.0)]
+
     keyphrases = [Keyphrase(text=kp, score=score) for kp, score in raw_keyphrases]
     keyphrase_texts = [kp.text for kp in keyphrases]
 
-    # Step 2: Retrieve Wikipedia context for top keyphrases
-    wiki_results = wikipedia_service.retrieve_batch(keyphrase_texts, max_lookups=3)
-    context_sources = [
-        ContextSource(keyphrase=wr["keyphrase"], summary=wr["summary"], url=wr["url"])
-        for wr in wiki_results
-    ]
-    combined_context = " ".join(wr["summary"] for wr in wiki_results)
+    # Step 2: Retrieve Wikipedia context (non-critical — degrade gracefully)
+    context_sources: List[ContextSource] = []
+    combined_context = ""
+    try:
+        wiki_results = wikipedia_service.retrieve_batch(keyphrase_texts, max_lookups=3)
+        context_sources = [
+            ContextSource(keyphrase=wr["keyphrase"], summary=wr["summary"], url=wr["url"])
+            for wr in wiki_results
+        ]
+        combined_context = " ".join(wr["summary"] for wr in wiki_results)
+    except Exception as exc:
+        logger.warning("Wikipedia retrieval failed, proceeding without context: %s", exc)
 
     # Step 3: Generate one question per requested type
     questions: List[Question] = []
     for i, qtype in enumerate(types):
-        text = question_gen_service.generate(
-            user_input=request.topic,
-            question_type=qtype,
-            retrieved_context=combined_context,
-        )
+        try:
+            text = question_gen_service.generate(
+                user_input=request.topic,
+                question_type=qtype,
+                retrieved_context=combined_context,
+            )
+        except Exception as exc:
+            logger.error("Question generation failed for type '%s': %s", qtype, exc)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Question generation failed for type '{qtype}'. Please try again.",
+            )
+
         related = _find_related_keyphrases(text, keyphrase_texts)
         questions.append(
             Question(
