@@ -6,6 +6,7 @@ import { InputPanel } from "@/components/InputPanel";
 import { QuestionCards } from "@/components/QuestionCards";
 import { SourcePanel } from "@/components/SourcePanel";
 import { LoadingState } from "@/components/LoadingState";
+import { ConceptMap } from "@/components/ConceptMap";
 
 function EmptyState() {
   return (
@@ -84,9 +85,12 @@ export default function Home() {
         {isLoading && <LoadingState />}
 
         {!isLoading && hasGenerated && (
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_280px]">
-            <QuestionCards />
-            <SourcePanel />
+          <div className="space-y-6">
+            <ConceptMap />
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_280px]">
+              <QuestionCards />
+              <SourcePanel />
+            </div>
           </div>
         )}
 
