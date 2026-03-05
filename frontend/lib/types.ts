@@ -79,3 +79,65 @@ export const ALL_QUESTION_TYPES: QuestionType[] = [
   "alternate_viewpoints_perspectives",
   "assumptions",
 ];
+
+// ── Exploration Tree Types ──────────────────────────────────
+
+export type InputType = "argumentative" | "factual" | "opinion" | "vague";
+export type PipelinePath = "wikipedia" | "gemini" | "fallback";
+export type NodeRole = "input" | "question" | "reflection";
+export type GenerationStage =
+  | "idle"
+  | "classifying"
+  | "gathering-context"
+  | "generating-questions";
+
+export interface ExplorationNode {
+  id: string;
+  type: NodeRole;
+  text: string;
+  parentId: string | null;
+  depth: number;
+  metadata: {
+    questionType?: QuestionType;
+    inputType?: InputType;
+    pipelinePath?: PipelinePath;
+    keyphrases?: Keyphrase[];
+    sources?: ContextSource[];
+    processingTimeMs?: number;
+    depthNudge?: string | null;
+  };
+  children: string[];
+  isCollapsed: boolean;
+}
+
+export interface AncestryNode {
+  role: NodeRole;
+  text: string;
+}
+
+export interface InputClassification {
+  input_type: InputType;
+  core_thesis: string | null;
+  confidence: number;
+  reasoning: string;
+}
+
+// ── Explore API Types ───────────────────────────────────────
+
+export interface ExploreRequest {
+  text: string;
+  parent_question_id: string | null;
+  ancestry: AncestryNode[];
+  depth: number;
+  question_types: QuestionType[];
+}
+
+export interface ExploreResponse {
+  input_classification: InputClassification;
+  pipeline_path: PipelinePath;
+  keyphrases: Keyphrase[];
+  context_sources: ContextSource[];
+  questions: Question[];
+  depth_nudge: string | null;
+  processing_time_ms: number;
+}

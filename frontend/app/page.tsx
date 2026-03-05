@@ -5,8 +5,7 @@ import { useAppStore } from "@/lib/store";
 import { InputPanel } from "@/components/InputPanel";
 import { QuestionCards } from "@/components/QuestionCards";
 import { SourcePanel } from "@/components/SourcePanel";
-import { LoadingState } from "@/components/LoadingState";
-import { ConceptMap } from "@/components/ConceptMap";
+import { ProgressIndicator } from "@/components/ProgressIndicator";
 
 function EmptyState() {
   return (
@@ -23,9 +22,9 @@ function EmptyState() {
       </p>
       <div className="mt-6 flex flex-wrap justify-center gap-2">
         {[
+          "I think AI will replace most creative jobs",
           "Climate change effects on agriculture",
-          "Social media and mental health",
-          "AI in healthcare",
+          "Social media does more harm than good",
         ].map((example) => (
           <button
             key={example}
@@ -50,8 +49,27 @@ function ErrorBanner({ message }: { message: string }) {
   );
 }
 
+function DepthNudge({ message }: { message: string }) {
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+      <strong className="font-semibold">Suggestion:</strong> {message}
+    </div>
+  );
+}
+
 export default function Home() {
-  const { isLoading, hasGenerated, error } = useAppStore();
+  const generationStage = useAppStore((s) => s.generationStage);
+  const rootId = useAppStore((s) => s.rootId);
+  const error = useAppStore((s) => s.error);
+  const nodes = useAppStore((s) => s.nodes);
+
+  const isLoading = generationStage !== "idle";
+  const hasGenerated = rootId !== null;
+
+  // Find the latest depth nudge from any node
+  const latestNudge = Object.values(nodes)
+    .filter((n) => n.metadata.depthNudge)
+    .sort((a, b) => b.depth - a.depth)[0]?.metadata.depthNudge;
 
   return (
     <div className="mx-auto min-h-screen max-w-5xl px-6 py-8">
@@ -64,7 +82,7 @@ export default function Home() {
           </h1>
         </div>
         <p className="mt-1 text-sm text-muted-foreground">
-          AI-powered Socratic question generation using a fine-tuned T5 model
+          AI-powered Socratic exploration using a fine-tuned T5 model
         </p>
       </header>
 
@@ -80,13 +98,20 @@ export default function Home() {
         </section>
       )}
 
+      {/* Progress indicator */}
+      {isLoading && <ProgressIndicator />}
+
+      {/* Depth nudge */}
+      {!isLoading && latestNudge && (
+        <section className="mb-6">
+          <DepthNudge message={latestNudge} />
+        </section>
+      )}
+
       {/* Results */}
       <section>
-        {isLoading && <LoadingState />}
-
         {!isLoading && hasGenerated && (
           <div className="space-y-6">
-            <ConceptMap />
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_280px]">
               <QuestionCards />
               <SourcePanel />

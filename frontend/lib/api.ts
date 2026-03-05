@@ -1,5 +1,10 @@
 import axios, { AxiosError } from "axios";
-import type { GenerateRequest, GenerateResponse } from "./types";
+import type {
+	GenerateRequest,
+	GenerateResponse,
+	ExploreRequest,
+	ExploreResponse,
+} from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -32,6 +37,20 @@ export async function generateQuestions(
 	try {
 		const { data } = await client.post<GenerateResponse>(
 			"/api/generate",
+			request,
+		);
+		return data;
+	} catch (err) {
+		throw new Error(extractErrorMessage(err));
+	}
+}
+
+export async function exploreQuestion(
+	request: ExploreRequest,
+): Promise<ExploreResponse> {
+	try {
+		const { data } = await client.post<ExploreResponse>(
+			"/api/explore",
 			request,
 		);
 		return data;

@@ -1,20 +1,188 @@
 "use client";
 
-import { MessageCircleQuestion } from "lucide-react";
+import {
+  MessageCircleQuestion,
+  MessageSquareText,
+  ChevronDown,
+  ChevronRight,
+} from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { QUESTION_TYPE_CONFIG } from "@/lib/types";
+import type { ExplorationNode, QuestionType } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { ReflectionPanel } from "./ReflectionPanel";
+
+function QuestionCard({ node }: { node: ExplorationNode }) {
+  const activeReflectionId = useAppStore((s) => s.activeReflectionId);
+  const setActiveReflection = useAppStore((s) => s.setActiveReflection);
+  const nodes = useAppStore((s) => s.nodes);
+
+  const qType = node.metadata.questionType as QuestionType;
+  const config = QUESTION_TYPE_CONFIG[qType];
+  const isReflecting = activeReflectionId === node.id;
+  const hasChildren = node.children.length > 0;
+
+  // Check if this question has been explored (has a reflection child)
+  const reflectionChild = node.children
+    .map((id) => nodes[id])
+    .find((n) => n?.type === "reflection");
+
+  return (
+    <div
+      className={cn(
+        "rounded-lg border bg-white transition-all duration-200",
+        isReflecting && "border-foreground/20 shadow-sm",
+        !isReflecting && "hover:shadow-sm",
+      )}
+    >
+      <div className="p-4">
+        {/* Type badge */}
+        <div className="mb-2 flex items-center justify-between">
+          <span
+            className={cn(
+              "inline-flex shrink-0 items-center rounded-full border px-2 py-0.5",
+              "text-[11px] font-semibold tracking-wide uppercase",
+              config.bg,
+              config.border,
+              config.color,
+            )}
+          >
+            {config.label}
+          </span>
+
+          {hasChildren && (
+            <span className="text-[10px] font-medium text-emerald-600">
+              Explored
+            </span>
+          )}
+        </div>
+
+        {/* Question text */}
+        <p className="mb-3 text-[15px] leading-relaxed text-foreground/90">
+          <MessageCircleQuestion className="mr-1.5 inline-block h-4 w-4 -translate-y-px text-muted-foreground/40" />
+          {node.text}
+        </p>
+
+        {/* Reflect button (only show if not already explored) */}
+        {!reflectionChild && (
+          <button
+            onClick={() =>
+              setActiveReflection(isReflecting ? null : node.id)
+            }
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5",
+              "text-xs font-medium transition-all duration-150",
+              isReflecting
+                ? "border-foreground/20 bg-foreground/5 text-foreground"
+                : "border-border text-muted-foreground hover:border-foreground/20 hover:text-foreground",
+            )}
+          >
+            <MessageSquareText className="h-3.5 w-3.5" />
+            Reflect
+          </button>
+        )}
+
+        {/* Show existing reflection summary if explored */}
+        {reflectionChild && (
+          <div className="rounded-md border border-dashed border-foreground/10 bg-secondary/20 p-2.5">
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              <span className="font-medium text-foreground/70">
+                Your reflection:
+              </span>{" "}
+              {reflectionChild.text.length > 150
+                ? reflectionChild.text.slice(0, 150) + "..."
+                : reflectionChild.text}
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Reflection panel (inline expand) */}
+      {isReflecting && (
+        <div className="border-t border-dashed border-foreground/10 px-4 pb-4">
+          <ReflectionPanel questionId={node.id} questionText={node.text} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BranchSection({
+  parentNode,
+  questions,
+  depth,
+}: {
+  parentNode: ExplorationNode;
+  questions: ExplorationNode[];
+  depth: number;
+}) {
+  const nodes = useAppStore((s) => s.nodes);
+
+  return (
+    <div className={cn(depth > 0 && "ml-4 border-l-2 border-foreground/5 pl-4")}>
+      {/* Branch header for depth > 0 */}
+      {depth > 0 && (
+        <div className="mb-3 flex items-center gap-2">
+          <div className="h-px flex-1 bg-border" />
+          <span className="text-[10px] font-semibold tracking-wider text-muted-foreground/60 uppercase">
+            Depth {depth} — Follow-up Questions
+          </span>
+          <div className="h-px flex-1 bg-border" />
+        </div>
+      )}
+
+      {/* Question cards at this level */}
+      <div className="space-y-2.5">
+        {questions.map((q) => (
+          <div key={q.id}>
+            <QuestionCard node={q} />
+
+            {/* Recursively render child branches */}
+            {q.children.map((childId) => {
+              const childNode = nodes[childId];
+              if (!childNode || childNode.type !== "reflection") return null;
+
+              // Get the questions under this reflection
+              const childQuestions = childNode.children
+                .map((id) => nodes[id])
+                .filter((n) => n?.type === "question");
+
+              if (childQuestions.length === 0) return null;
+
+              return (
+                <BranchSection
+                  key={childId}
+                  parentNode={childNode}
+                  questions={childQuestions}
+                  depth={depth + 1}
+                />
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export function QuestionCards() {
-  const { questions, selectedKeyphrase, processingTimeMs } = useAppStore();
+  const nodes = useAppStore((s) => s.nodes);
+  const rootId = useAppStore((s) => s.rootId);
 
-  const filtered = selectedKeyphrase
-    ? questions.filter((q) =>
-        q.related_keyphrases.some(
-          (kp) => kp.toLowerCase() === selectedKeyphrase.toLowerCase()
-        )
-      )
-    : questions;
+  if (!rootId) return null;
+
+  const rootNode = nodes[rootId];
+  if (!rootNode) return null;
+
+  // Get top-level questions (children of root)
+  const topQuestions = rootNode.children
+    .map((id) => nodes[id])
+    .filter((n) => n?.type === "question");
+
+  // Calculate total processing time across all levels
+  const totalTimeMs = Object.values(nodes)
+    .filter((n) => n.metadata.processingTimeMs)
+    .reduce((sum, n) => sum + (n.metadata.processingTimeMs ?? 0), 0);
 
   return (
     <div className="space-y-3">
@@ -22,72 +190,18 @@ export function QuestionCards() {
         <h2 className="text-sm font-semibold tracking-wide text-foreground/80 uppercase">
           Socratic Questions
         </h2>
-        {processingTimeMs !== null && (
+        {totalTimeMs > 0 && (
           <span className="font-mono text-[11px] text-muted-foreground">
-            {(processingTimeMs / 1000).toFixed(1)}s
+            {(totalTimeMs / 1000).toFixed(1)}s
           </span>
         )}
       </div>
 
-      {selectedKeyphrase && (
-        <p className="text-xs text-muted-foreground">
-          Showing questions related to{" "}
-          <span className="font-medium text-foreground">
-            &ldquo;{selectedKeyphrase}&rdquo;
-          </span>
-          {" "}
-          &middot;{" "}
-          <button
-            onClick={() => useAppStore.getState().selectKeyphrase(null)}
-            className="underline transition-colors hover:text-foreground"
-          >
-            show all
-          </button>
-        </p>
-      )}
-
-      <div className="space-y-2.5">
-        {filtered.map((question, i) => {
-          const config = QUESTION_TYPE_CONFIG[question.type];
-          return (
-            <div
-              key={question.id}
-              className={cn(
-                "group rounded-lg border bg-white p-4",
-                "transition-all duration-200",
-                "hover:shadow-sm",
-                `stagger-${i + 1}`
-              )}
-              style={{ animationFillMode: "backwards" }}
-            >
-              <div className="mb-2 flex items-start gap-2.5">
-                <span
-                  className={cn(
-                    "inline-flex shrink-0 items-center rounded-full border px-2 py-0.5",
-                    "text-[11px] font-semibold tracking-wide uppercase",
-                    config.bg,
-                    config.border,
-                    config.color
-                  )}
-                >
-                  {config.label}
-                </span>
-              </div>
-
-              <p className="leading-relaxed text-[15px] text-foreground/90">
-                <MessageCircleQuestion className="mr-1.5 inline-block h-4 w-4 -translate-y-px text-muted-foreground/40" />
-                {question.text}
-              </p>
-            </div>
-          );
-        })}
-      </div>
-
-      {filtered.length === 0 && questions.length > 0 && (
-        <p className="py-6 text-center text-sm text-muted-foreground">
-          No questions match the selected keyphrase.
-        </p>
-      )}
+      <BranchSection
+        parentNode={rootNode}
+        questions={topQuestions}
+        depth={0}
+      />
     </div>
   );
 }

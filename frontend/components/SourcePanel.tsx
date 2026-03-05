@@ -5,8 +5,11 @@ import { useAppStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
 export function SourcePanel() {
-  const { sources, keyphrases, selectedKeyphrase, selectKeyphrase } =
-    useAppStore();
+  const getRootKeyphrases = useAppStore((s) => s.getRootKeyphrases);
+  const getRootSources = useAppStore((s) => s.getRootSources);
+
+  const keyphrases = getRootKeyphrases();
+  const sources = getRootSources();
 
   return (
     <div className="space-y-5">
@@ -19,19 +22,12 @@ export function SourcePanel() {
           </h3>
           <div className="flex flex-wrap gap-1.5">
             {keyphrases.map((kp) => (
-              <button
+              <span
                 key={kp.text}
-                onClick={() => selectKeyphrase(kp.text)}
-                className={cn(
-                  "rounded-md border px-2.5 py-1 font-mono text-[11px]",
-                  "transition-all duration-150",
-                  selectedKeyphrase === kp.text
-                    ? "border-foreground/30 bg-foreground text-background"
-                    : "border-border bg-white text-muted-foreground hover:border-foreground/20 hover:text-foreground"
-                )}
+                className="rounded-md border border-border bg-white px-2.5 py-1 font-mono text-[11px] text-muted-foreground"
               >
                 {kp.text}
-              </button>
+              </span>
             ))}
           </div>
         </div>

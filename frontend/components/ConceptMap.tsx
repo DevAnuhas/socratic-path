@@ -117,27 +117,25 @@ function buildLayout(
 }
 
 export function ConceptMap() {
-	const {
-		topic,
-		keyphrases,
-		sources,
-		selectedKeyphrase,
-		selectKeyphrase,
-		setTopic,
-		generate,
-	} = useAppStore();
+	const topic = useAppStore((s) => s.topic);
+	const getRootKeyphrases = useAppStore((s) => s.getRootKeyphrases);
+	const getRootSources = useAppStore((s) => s.getRootSources);
+	const setTopic = useAppStore((s) => s.setTopic);
+
+	const keyphrases = getRootKeyphrases();
+	const sources = getRootSources();
+	const selectedKeyphrase: string | null = null;
 
 	const handleSelect = useCallback(
-		(kp: string) => selectKeyphrase(kp),
-		[selectKeyphrase],
+		(_kp: string) => { /* no-op until Day 3 */ },
+		[],
 	);
 
 	const handleExplore = useCallback(
 		(kp: string) => {
 			setTopic(kp);
-			// Small delay so the store updates before generating
 			setTimeout(() => {
-				useAppStore.getState().generate();
+				useAppStore.getState().submitInitialInput();
 			}, 50);
 		},
 		[setTopic],
