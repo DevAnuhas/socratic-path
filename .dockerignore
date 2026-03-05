@@ -1,0 +1,31 @@
+# Frontend (deployed separately on Vercel)
+frontend/
+node_modules/
+
+# Training artifacts
+notebooks/
+datasets/
+training/
+models/_/checkpoint-_
+models/_/runs/
+_.ipynb
+
+# Dev/CI
+.git/
+.github/
+.venv/
+**pycache**/
+_.pyc
+.env
+.env._
+\*.egg-info/
+
+# Docs
+docs/
+\*.md
+LICENSE
+
+# Supabase migrations (run manually)
+supabase/
+
+# Keep only the merged model (explicitly included in Dockerfile COPY)
