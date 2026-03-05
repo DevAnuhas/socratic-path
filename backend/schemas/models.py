@@ -40,3 +40,33 @@ class GenerateResponse(BaseModel):
     context_sources: List[ContextSource]
     questions: List[Question]
     processing_time_ms: float
+
+
+class AncestryNode(BaseModel):
+    role: str = Field(..., pattern="^(input|question|reflection)$")
+    text: str = Field(..., min_length=1)
+
+
+class ExploreRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=5000)
+    parent_question_id: Optional[str] = None
+    ancestry: List[AncestryNode] = Field(default_factory=list)
+    depth: int = Field(default=0, ge=0)
+    question_types: List[str] = Field(default=VALID_QUESTION_TYPES)
+
+
+class InputClassification(BaseModel):
+    input_type: str          # argumentative | factual | opinion | vague
+    core_thesis: Optional[str] = None
+    confidence: float
+    reasoning: str = ""
+
+
+class ExploreResponse(BaseModel):
+    input_classification: InputClassification
+    pipeline_path: str       # "wikipedia" | "gemini" | "fallback"
+    keyphrases: List[Keyphrase]
+    context_sources: List[ContextSource]
+    questions: List[Question]
+    depth_nudge: Optional[str] = None
+    processing_time_ms: float

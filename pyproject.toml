@@ -32,6 +32,9 @@ dependencies = [
     # Wikipedia retrieval
     "wikipedia-api>=0.7.0",
 
+    # LLM orchestration
+    "google-genai>=1.0.0",
+
     # Backend
     "fastapi>=0.115.0",                # latest stable: 0.133.0
     "uvicorn>=0.30.0",
