@@ -1,7 +1,17 @@
 "use client";
 
-import { useState } from "react";
-import { BrainCircuit, HelpCircle, Share2, RefreshCw, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import {
+  BrainCircuit,
+  HelpCircle,
+  Share2,
+  RefreshCw,
+  X,
+  FolderOpen,
+  LogOut,
+} from "lucide-react";
+import { useAuth } from "@/lib/auth-context";
 import { useAppStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { InputPanel } from "@/components/InputPanel";
@@ -10,6 +20,7 @@ import { SourcePanel } from "@/components/SourcePanel";
 import { ProgressIndicator } from "@/components/ProgressIndicator";
 import { ExplorationGraph } from "@/components/ExplorationGraph";
 import { ExportDialog } from "@/components/ExportDialog";
+import { ExplorationsList } from "@/components/ExplorationsList";
 
 function EmptyState() {
   return (
@@ -90,12 +101,23 @@ function DepthNudge({ message }: { message: string }) {
 }
 
 export default function Home() {
+  const { user, isLoading: authLoading, signOut } = useAuth();
+  const router = useRouter();
+
   const generationStage = useAppStore((s) => s.generationStage);
   const rootId = useAppStore((s) => s.rootId);
   const error = useAppStore((s) => s.error);
   const nodes = useAppStore((s) => s.nodes);
   const lastFailedAction = useAppStore((s) => s.lastFailedAction);
   const [exportOpen, setExportOpen] = useState(false);
+  const [explorationsOpen, setExplorationsOpen] = useState(false);
+
+  // Auth gate: redirect to login if not authenticated
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.replace("/login");
+    }
+  }, [user, authLoading, router]);
 
   const isLoading = generationStage !== "idle";
   const hasGenerated = rootId !== null;
@@ -104,6 +126,20 @@ export default function Home() {
   const latestNudge = Object.values(nodes)
     .filter((n) => n.metadata.depthNudge)
     .sort((a, b) => b.depth - a.depth)[0]?.metadata.depthNudge;
+
+  // Show loading spinner while auth is resolving
+  if (authLoading || !user) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-foreground/20 border-t-foreground" />
+      </div>
+    );
+  }
+
+  // Extract user display info from Google profile
+  const displayName =
+    user.user_metadata?.full_name ?? user.user_metadata?.name ?? user.email;
+  const avatarUrl = user.user_metadata?.avatar_url;
 
   return (
     <div className="mx-auto min-h-screen max-w-5xl px-6 py-8">
@@ -121,9 +157,10 @@ export default function Home() {
           </p>
         </div>
 
-        {hasGenerated && (
+        <div className="flex items-center gap-2">
+          {/* My Explorations */}
           <button
-            onClick={() => setExportOpen(true)}
+            onClick={() => setExplorationsOpen(true)}
             className={cn(
               "inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5",
               "text-xs font-medium text-muted-foreground",
@@ -131,10 +168,48 @@ export default function Home() {
               "hover:border-foreground/20 hover:text-foreground",
             )}
           >
-            <Share2 className="h-3.5 w-3.5" />
-            Export
+            <FolderOpen className="h-3.5 w-3.5" />
+            My Explorations
           </button>
-        )}
+
+          {/* Export */}
+          {hasGenerated && (
+            <button
+              onClick={() => setExportOpen(true)}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5",
+                "text-xs font-medium text-muted-foreground",
+                "transition-all cursor-pointer",
+                "hover:border-foreground/20 hover:text-foreground",
+              )}
+            >
+              <Share2 className="h-3.5 w-3.5" />
+              Export
+            </button>
+          )}
+
+          {/* User info + sign out */}
+          <div className="flex items-center gap-2 ml-2 border-l pl-3">
+            {avatarUrl && (
+              <img
+                src={avatarUrl}
+                alt={displayName}
+                className="h-7 w-7 rounded-full"
+                referrerPolicy="no-referrer"
+              />
+            )}
+            <span className="hidden text-xs text-muted-foreground sm:inline">
+              {displayName}
+            </span>
+            <button
+              onClick={signOut}
+              className="rounded p-1 text-muted-foreground/50 transition-colors hover:text-foreground cursor-pointer"
+              title="Sign out"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
       </header>
 
       {/* Input */}
@@ -176,6 +251,12 @@ export default function Home() {
 
       {/* Export dialog */}
       <ExportDialog open={exportOpen} onClose={() => setExportOpen(false)} />
+
+      {/* Explorations list dialog */}
+      <ExplorationsList
+        open={explorationsOpen}
+        onClose={() => setExplorationsOpen(false)}
+      />
     </div>
   );
 }

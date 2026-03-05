@@ -1,8 +1,9 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { exploreQuestion } from "./api";
+import { exploreQuestion, saveExploration } from "./api";
 import type {
   ExplorationNode,
+  ExplorationDetail,
   QuestionType,
   GenerationStage,
   AncestryNode,
@@ -26,6 +27,10 @@ interface SocraticStore {
   // Exploration tree
   nodes: Record<string, ExplorationNode>;
   rootId: string | null;
+
+  // Persistence
+  currentExplorationId: string | null;
+  isSaving: boolean;
 
   // Active UI state
   activeReflectionId: string | null;
@@ -54,6 +59,10 @@ interface SocraticStore {
     reflectionText: string,
   ) => Promise<void>;
 
+  // Actions — persistence
+  saveCurrentExploration: () => Promise<void>;
+  loadExploration: (detail: ExplorationDetail) => void;
+
   // Actions — graph navigation
   selectNode: (nodeId: string | null) => void;
   setActiveReflection: (questionId: string | null) => void;
@@ -76,6 +85,8 @@ interface SocraticStore {
 const initialState = {
   nodes: {} as Record<string, ExplorationNode>,
   rootId: null as string | null,
+  currentExplorationId: null as string | null,
+  isSaving: false,
   activeReflectionId: null as string | null,
   selectedNodeId: null as string | null,
   generationStage: "idle" as GenerationStage,
@@ -85,6 +96,21 @@ const initialState = {
   error: null as string | null,
   lastFailedAction: null as (() => Promise<void>) | null,
 };
+
+// ── Helpers ─────────────────────────────────────────────────
+
+/** Convert store nodes to the payload format for the save API. */
+function nodesToPayload(nodes: Record<string, ExplorationNode>) {
+  return Object.values(nodes).map((node) => ({
+    node_id: node.id,
+    node_type: node.type,
+    text: node.text,
+    parent_node_id: node.parentId,
+    depth: node.depth,
+    metadata: node.metadata as Record<string, unknown>,
+    children: node.children,
+  }));
+}
 
 // ── Store ───────────────────────────────────────────────────
 
@@ -119,6 +145,7 @@ export const useAppStore = create<SocraticStore>()(
         set({
           nodes: {},
           rootId: null,
+          currentExplorationId: null,
           error: null,
           generationStage: "classifying",
           activeReflectionId: null,
@@ -196,6 +223,9 @@ export const useAppStore = create<SocraticStore>()(
             generationStage: "idle",
             lastClassification: data.input_classification,
           });
+
+          // Auto-save after successful generation
+          get().saveCurrentExploration();
         } catch (err) {
           clearTimeout(timer1);
           clearTimeout(timer2);
@@ -318,6 +348,9 @@ export const useAppStore = create<SocraticStore>()(
               lastClassification: data.input_classification,
             };
           });
+
+          // Auto-save after successful reflection
+          get().saveCurrentExploration();
         } catch (err) {
           clearTimeout(timer1);
           clearTimeout(timer2);
@@ -349,6 +382,78 @@ export const useAppStore = create<SocraticStore>()(
             };
           });
         }
+      },
+
+      // ── Persistence ────────────────────────────────────────
+
+      saveCurrentExploration: async () => {
+        const { nodes, rootId, topic, isSaving } = get();
+        if (!rootId || isSaving) return;
+
+        set({ isSaving: true });
+
+        try {
+          const result = await saveExploration({
+            exploration_id: get().currentExplorationId ?? undefined,
+            title: topic.trim().slice(0, 200),
+            root_node_id: rootId,
+            nodes: nodesToPayload(nodes),
+          });
+
+          set({ currentExplorationId: result.id, isSaving: false });
+        } catch (err) {
+          // Save failures are non-blocking — log but don't show error banner
+          console.warn("Auto-save failed:", err);
+          set({ isSaving: false });
+        }
+      },
+
+      loadExploration: (detail) => {
+        const nodes: Record<string, ExplorationNode> = {};
+
+        // Convert DB rows back into ExplorationNode records
+        for (const row of detail.nodes) {
+          nodes[row.node_id] = {
+            id: row.node_id,
+            type: row.node_type,
+            text: row.text,
+            parentId: row.parent_node_id,
+            depth: row.depth,
+            metadata: row.metadata as ExplorationNode["metadata"],
+            children: row.children,
+            isCollapsed: false,
+          };
+        }
+
+        // Restore the node counter to avoid ID collisions
+        const maxId = Object.keys(nodes).reduce((max, key) => {
+          const num = parseInt(key.split("_").pop() || "0", 10);
+          return isNaN(num) ? max : Math.max(max, num);
+        }, 0);
+        _nodeCounter = maxId;
+
+        // Find the root node's text to restore the topic
+        const rootNode = nodes[detail.root_node_id];
+
+        set({
+          nodes,
+          rootId: detail.root_node_id,
+          currentExplorationId: detail.id,
+          topic: rootNode?.text ?? detail.title,
+          generationStage: "idle",
+          activeReflectionId: null,
+          selectedNodeId: null,
+          error: null,
+          lastFailedAction: null,
+          lastClassification: rootNode?.metadata.inputType
+            ? {
+                input_type: rootNode.metadata.inputType,
+                core_thesis: null,
+                confidence: 0,
+                reasoning: "",
+              }
+            : null,
+        });
       },
 
       // ── Graph navigation ───────────────────────────────────
@@ -444,6 +549,7 @@ export const useAppStore = create<SocraticStore>()(
       partialize: (state) => ({
         nodes: state.nodes,
         rootId: state.rootId,
+        currentExplorationId: state.currentExplorationId,
         topic: state.topic,
         selectedTypes: state.selectedTypes,
         lastClassification: state.lastClassification,

@@ -141,3 +141,50 @@ export interface ExploreResponse {
   depth_nudge: string | null;
   processing_time_ms: number;
 }
+
+// ── Exploration Persistence Types ─────────────────────────
+
+export interface ExplorationSummary {
+  id: string;
+  title: string;
+  root_node_id: string;
+  node_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ExplorationNodeRow {
+  node_id: string;
+  node_type: NodeRole;
+  text: string;
+  parent_node_id: string | null;
+  depth: number;
+  metadata: Record<string, unknown>;
+  children: string[];
+  sort_order: number;
+}
+
+export interface ExplorationDetail {
+  id: string;
+  title: string;
+  root_node_id: string;
+  node_count: number;
+  created_at: string;
+  updated_at: string;
+  nodes: ExplorationNodeRow[];
+}
+
+export interface SaveExplorationPayload {
+  exploration_id?: string;
+  title: string;
+  root_node_id: string;
+  nodes: {
+    node_id: string;
+    node_type: NodeRole;
+    text: string;
+    parent_node_id: string | null;
+    depth: number;
+    metadata: Record<string, unknown>;
+    children: string[];
+  }[];
+}
