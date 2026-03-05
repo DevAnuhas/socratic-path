@@ -1,12 +1,15 @@
 "use client";
 
-import { BrainCircuit, HelpCircle } from "lucide-react";
+import { useState } from "react";
+import { BrainCircuit, HelpCircle, Share2 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
+import { cn } from "@/lib/utils";
 import { InputPanel } from "@/components/InputPanel";
 import { QuestionCards } from "@/components/QuestionCards";
 import { SourcePanel } from "@/components/SourcePanel";
 import { ProgressIndicator } from "@/components/ProgressIndicator";
 import { ExplorationGraph } from "@/components/ExplorationGraph";
+import { ExportDialog } from "@/components/ExportDialog";
 
 function EmptyState() {
   return (
@@ -63,6 +66,7 @@ export default function Home() {
   const rootId = useAppStore((s) => s.rootId);
   const error = useAppStore((s) => s.error);
   const nodes = useAppStore((s) => s.nodes);
+  const [exportOpen, setExportOpen] = useState(false);
 
   const isLoading = generationStage !== "idle";
   const hasGenerated = rootId !== null;
@@ -75,16 +79,33 @@ export default function Home() {
   return (
     <div className="mx-auto min-h-screen max-w-5xl px-6 py-8">
       {/* Header */}
-      <header className="mb-8">
-        <div className="flex items-center gap-2.5">
-          <BrainCircuit className="h-6 w-6 text-foreground/80" />
-          <h1 className="text-xl font-bold tracking-tight text-foreground">
-            SocraticPath
-          </h1>
+      <header className="mb-8 flex items-start justify-between">
+        <div>
+          <div className="flex items-center gap-2.5">
+            <BrainCircuit className="h-6 w-6 text-foreground/80" />
+            <h1 className="text-xl font-bold tracking-tight text-foreground">
+              SocraticPath
+            </h1>
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            AI-powered Socratic exploration using a fine-tuned T5 model
+          </p>
         </div>
-        <p className="mt-1 text-sm text-muted-foreground">
-          AI-powered Socratic exploration using a fine-tuned T5 model
-        </p>
+
+        {hasGenerated && (
+          <button
+            onClick={() => setExportOpen(true)}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5",
+              "text-xs font-medium text-muted-foreground",
+              "transition-all cursor-pointer",
+              "hover:border-foreground/20 hover:text-foreground",
+            )}
+          >
+            <Share2 className="h-3.5 w-3.5" />
+            Export
+          </button>
+        )}
       </header>
 
       {/* Input */}
@@ -123,6 +144,9 @@ export default function Home() {
 
         {!isLoading && !hasGenerated && !error && <EmptyState />}
       </section>
+
+      {/* Export dialog */}
+      <ExportDialog open={exportOpen} onClose={() => setExportOpen(false)} />
     </div>
   );
 }
