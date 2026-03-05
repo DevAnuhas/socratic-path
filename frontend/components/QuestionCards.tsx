@@ -3,8 +3,6 @@
 import {
   MessageCircleQuestion,
   MessageSquareText,
-  ChevronDown,
-  ChevronRight,
 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { QUESTION_TYPE_CONFIG } from "@/lib/types";
@@ -108,6 +106,36 @@ function QuestionCard({ node }: { node: ExplorationNode }) {
   );
 }
 
+function FollowUpSkeleton({ depth }: { depth: number }) {
+  return (
+    <div className={cn("ml-4 border-l-2 border-foreground/5 pl-4")}>
+      <div className="mb-3 pt-3 flex items-center gap-2">
+        <div className="h-px flex-1 bg-border" />
+        <span className="text-[10px] font-semibold tracking-wider text-muted-foreground/60 uppercase">
+          Generating follow-ups...
+        </span>
+        <div className="h-px flex-1 bg-border" />
+      </div>
+      <div className="space-y-2.5">
+        {[1, 2, 3].map((i) => (
+          <div
+            key={i}
+            className={cn(
+              "rounded-lg border border-border/60 bg-white p-4 space-y-2.5",
+              `stagger-${i}`,
+            )}
+            style={{ animationFillMode: "backwards" }}
+          >
+            <div className="skeleton-shimmer h-5 w-20 rounded-full" />
+            <div className="skeleton-shimmer h-4 w-full rounded" />
+            <div className="skeleton-shimmer h-4 w-3/4 rounded" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function BranchSection({
   parentNode,
   questions,
@@ -118,6 +146,8 @@ function BranchSection({
   depth: number;
 }) {
   const nodes = useAppStore((s) => s.nodes);
+  const generationStage = useAppStore((s) => s.generationStage);
+  const isLoading = generationStage !== "idle";
 
   return (
     <div className={cn(depth > 0 && "ml-4 border-l-2 border-foreground/5 pl-4")}>
@@ -138,7 +168,7 @@ function BranchSection({
           <div key={q.id}>
             <QuestionCard node={q} />
 
-            {/* Recursively render child branches */}
+            {/* Recursively render child branches or loading skeleton */}
             {q.children.map((childId) => {
               const childNode = nodes[childId];
               if (!childNode || childNode.type !== "reflection") return null;
@@ -148,7 +178,15 @@ function BranchSection({
                 .map((id) => nodes[id])
                 .filter((n) => n?.type === "question");
 
-              if (childQuestions.length === 0) return null;
+              // Reflection exists but questions haven't arrived yet → skeleton
+              if (childQuestions.length === 0) {
+                if (isLoading) {
+                  return (
+                    <FollowUpSkeleton key={childId} depth={depth + 1} />
+                  );
+                }
+                return null;
+              }
 
               return (
                 <BranchSection
