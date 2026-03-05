@@ -5,7 +5,6 @@ import { useAppStore } from "@/lib/store";
 import {
   ALL_QUESTION_TYPES,
   QUESTION_TYPE_CONFIG,
-  type QuestionType,
   type InputType,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";

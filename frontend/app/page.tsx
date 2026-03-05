@@ -6,6 +6,7 @@ import { InputPanel } from "@/components/InputPanel";
 import { QuestionCards } from "@/components/QuestionCards";
 import { SourcePanel } from "@/components/SourcePanel";
 import { ProgressIndicator } from "@/components/ProgressIndicator";
+import { ExplorationGraph } from "@/components/ExplorationGraph";
 
 function EmptyState() {
   return (
@@ -110,8 +111,9 @@ export default function Home() {
 
       {/* Results */}
       <section>
-        {!isLoading && hasGenerated && (
+        {hasGenerated && (
           <div className="space-y-6">
+            <ExplorationGraph />
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_280px]">
               <QuestionCards />
               <SourcePanel />

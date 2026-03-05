@@ -29,6 +29,7 @@ function QuestionCard({ node }: { node: ExplorationNode }) {
 
   return (
     <div
+      id={`question-card-${node.id}`}
       className={cn(
         "rounded-lg border bg-white transition-all duration-200",
         isReflecting && "border-foreground/20 shadow-sm",
@@ -71,7 +72,7 @@ function QuestionCard({ node }: { node: ExplorationNode }) {
             }
             className={cn(
               "inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5",
-              "text-xs font-medium transition-all duration-150",
+              "text-xs font-medium transition-all duration-150 cursor-pointer",
               isReflecting
                 ? "border-foreground/20 bg-foreground/5 text-foreground"
                 : "border-border text-muted-foreground hover:border-foreground/20 hover:text-foreground",
@@ -100,7 +101,7 @@ function QuestionCard({ node }: { node: ExplorationNode }) {
       {/* Reflection panel (inline expand) */}
       {isReflecting && (
         <div className="border-t border-dashed border-foreground/10 px-4 pb-4">
-          <ReflectionPanel questionId={node.id} questionText={node.text} />
+          <ReflectionPanel questionId={node.id} />
         </div>
       )}
     </div>
@@ -122,7 +123,7 @@ function BranchSection({
     <div className={cn(depth > 0 && "ml-4 border-l-2 border-foreground/5 pl-4")}>
       {/* Branch header for depth > 0 */}
       {depth > 0 && (
-        <div className="mb-3 flex items-center gap-2">
+        <div className="mb-3 pt-3 flex items-center gap-2">
           <div className="h-px flex-1 bg-border" />
           <span className="text-[10px] font-semibold tracking-wider text-muted-foreground/60 uppercase">
             Depth {depth} — Follow-up Questions

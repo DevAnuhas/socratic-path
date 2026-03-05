@@ -7,14 +7,12 @@ import { cn } from "@/lib/utils";
 
 interface ReflectionPanelProps {
   questionId: string;
-  questionText: string;
 }
 
 const MAX_CHARS = 2000;
 
 export function ReflectionPanel({
   questionId,
-  questionText,
 }: ReflectionPanelProps) {
   const [text, setText] = useState("");
   const submitReflection = useAppStore((s) => s.submitReflection);
