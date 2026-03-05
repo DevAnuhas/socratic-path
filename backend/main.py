@@ -1,22 +1,26 @@
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
 
-# Load .env from project root (one level up from backend/)
-_env_path = Path(__file__).resolve().parent.parent / ".env"
-load_dotenv(_env_path)
+# Load .env — try backend/.env first (local dev), then project root
+_backend_dir = Path(__file__).resolve().parent
+load_dotenv(_backend_dir / ".env")
+load_dotenv(_backend_dir.parent / ".env")  # won't overwrite existing vars
 
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.auth import init_auth
 from backend.services.keyphrase import KeyphraseService
 from backend.services.wikipedia import WikipediaService
 from backend.services.question_gen import QuestionGenerationService
 from backend.services.gemini_service import GeminiService
 from backend.services.context_router import ContextRouter
-from backend.routes import generate, explore
+from backend.services.database import DatabaseService
+from backend.routes import generate, explore, explorations
 
 logging.basicConfig(
     level=logging.INFO,
@@ -29,12 +33,19 @@ _keyphrase_service = KeyphraseService()
 _wikipedia_service = WikipediaService()
 _question_gen_service = QuestionGenerationService()
 _gemini_service = GeminiService()
+_db_service = DatabaseService()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load ML models at startup, clean up on shutdown."""
     logger.info("Starting SocraticPath backend...")
+
+    # Auth + database
+    init_auth()
+    _db_service.load()
+
+    # ML models
     _keyphrase_service.load()
     _question_gen_service.load()
     _gemini_service.load()
@@ -54,6 +65,8 @@ async def lifespan(app: FastAPI):
     explore.context_router = _context_router
     explore.question_gen_service = _question_gen_service
 
+    explorations.db_service = _db_service
+
     logger.info("All services ready.")
     yield
     logger.info("Shutting down SocraticPath backend.")
@@ -62,13 +75,17 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="SocraticPath API",
     description="Generates Socratic questions from user-provided topics using a fine-tuned T5 model.",
-    version="1.1.0",
+    version="1.2.0",
     lifespan=lifespan,
 )
 
+# CORS: allow frontend origin from env (production) + localhost (dev)
+_frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+_allowed_origins = list({_frontend_url, "http://localhost:3000"})
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -76,6 +93,7 @@ app.add_middleware(
 
 app.include_router(generate.router)
 app.include_router(explore.router)
+app.include_router(explorations.router)
 
 
 @app.get("/api/health")
@@ -84,4 +102,5 @@ async def health():
         "status": "ok",
         "model_loaded": _question_gen_service.is_loaded,
         "gemini_loaded": _gemini_service.is_loaded,
+        "db_loaded": _db_service.is_loaded,
     }

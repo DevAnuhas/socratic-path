@@ -12,8 +12,9 @@ import time
 import logging
 from typing import List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from backend.auth import get_current_user
 from backend.schemas.models import (
     VALID_QUESTION_TYPES,
     ExploreRequest,
@@ -47,7 +48,10 @@ def _find_related_keyphrases(question_text: str, keyphrases: list[str]) -> list[
 
 
 @router.post("/explore", response_model=ExploreResponse)
-async def explore(request: ExploreRequest):
+async def explore(
+    request: ExploreRequest,
+    user_id: str = Depends(get_current_user),
+):
     """
     Generate Socratic questions with intelligent context routing.
 

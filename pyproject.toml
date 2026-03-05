@@ -43,6 +43,10 @@ dependencies = [
     "pydantic>=2.10.0",               # latest stable: 2.12.5
     "python-dotenv>=1.0.1",
 
+    # Auth + database
+    "supabase>=2.0.0",
+    "python-jose[cryptography]>=3.3.0",
+
     # Notebooks & visualisation
     "matplotlib>=3.9.0",               # latest stable: 3.10.8
     "seaborn>=0.13.0",

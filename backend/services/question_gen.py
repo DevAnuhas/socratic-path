@@ -1,4 +1,5 @@
 import logging
+import os
 from pathlib import Path
 
 import torch
@@ -19,16 +20,31 @@ DEFAULT_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "t5-base-l
 class QuestionGenerationService:
     """Loads the merged T5-base + LoRA model and generates Socratic questions."""
 
-    def __init__(self, model_path: str | Path | None = None):
+    def __init__(self, model_path: str | Path | None = None, use_fp16: bool = False):
         self.model = None
         self.tokenizer = None
         self.device = "cpu"
-        self._model_path = Path(model_path) if model_path else DEFAULT_MODEL_PATH
+        self._use_fp16 = use_fp16
+        # MODEL_PATH env var allows override for deployment (e.g. /app/model)
+        env_path = os.getenv("MODEL_PATH")
+        if model_path:
+            self._model_path = Path(model_path)
+        elif env_path:
+            self._model_path = Path(env_path)
+        else:
+            self._model_path = DEFAULT_MODEL_PATH
 
     def load(self) -> None:
-        logger.info("Loading T5-base merged model from %s ...", self._model_path)
+        dtype = torch.float16 if self._use_fp16 else torch.float32
+        logger.info(
+            "Loading T5-base merged model from %s (dtype=%s) ...",
+            self._model_path, dtype,
+        )
         self.tokenizer = AutoTokenizer.from_pretrained(str(self._model_path))
-        self.model = AutoModelForSeq2SeqLM.from_pretrained(str(self._model_path))
+        self.model = AutoModelForSeq2SeqLM.from_pretrained(
+            str(self._model_path),
+            torch_dtype=dtype,
+        )
         self.model.to(self.device)
         self.model.eval()
         logger.info(
