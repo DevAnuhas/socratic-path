@@ -50,20 +50,28 @@ class QuestionGenerationService:
         """
         Generate a single Socratic question.
 
-        Prompt format mirrors training data exactly:
+        The prompt is structured to anchor the model on the user's original
+        statement. The training prompt format is preserved as the core:
           "Generate a Socratic question for this context: {type}: {text}"
-        If retrieved_context is provided, it is appended so the encoder
-        can attend to external knowledge.
+
+        Retrieved Wikipedia context is appended as clearly-labelled background
+        so the model can draw on factual knowledge without drifting away from
+        the user's actual argument.
         """
         prompt = (
             f"Generate a Socratic question for this context: "
             f"{question_type}: {user_input}"
         )
+
         if retrieved_context:
-            prompt += f"\n\nAdditional context: {retrieved_context[:500]}"
+            # Cap context to avoid drowning out the user's input
+            max_ctx = min(400, max(100, 500 - len(user_input)))
+            prompt += (
+                f"\n\nBackground information: {retrieved_context[:max_ctx]}"
+            )
 
         inputs = self.tokenizer(
-            prompt, return_tensors="pt", max_length=400, truncation=True
+            prompt, return_tensors="pt", max_length=512, truncation=True
         )
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
 

@@ -64,10 +64,11 @@ async def generate_questions(request: GenerateRequest):
     keyphrase_texts = [kp.text for kp in keyphrases]
 
     # Step 2: Retrieve Wikipedia context (non-critical — degrade gracefully)
+    # Only look up the top 2 highest-scoring keyphrases to avoid tangential context
     context_sources: List[ContextSource] = []
     combined_context = ""
     try:
-        wiki_results = wikipedia_service.retrieve_batch(keyphrase_texts, max_lookups=3)
+        wiki_results = wikipedia_service.retrieve_batch(keyphrase_texts, max_lookups=2)
         context_sources = [
             ContextSource(keyphrase=wr["keyphrase"], summary=wr["summary"], url=wr["url"])
             for wr in wiki_results
