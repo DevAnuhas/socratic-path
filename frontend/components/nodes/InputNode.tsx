@@ -77,7 +77,7 @@ export function InputNode({ data }: NodeProps) {
       <Handle
         type="source"
         position={Position.Bottom}
-        className="!h-2.5 !w-2.5 !border-2 !border-white !bg-foreground/30"
+        className="h-2.5! w-2.5! border-2! border-white! bg-foreground/30!"
       />
 
       {/* Input handle (top — for non-root reflection-turned-input nodes) */}
@@ -85,7 +85,7 @@ export function InputNode({ data }: NodeProps) {
         <Handle
           type="target"
           position={Position.Top}
-          className="!h-2.5 !w-2.5 !border-2 !border-white !bg-foreground/30"
+          className="h-2.5! w-2.5! border-2! border-white! bg-foreground/30!"
         />
       )}
     </div>

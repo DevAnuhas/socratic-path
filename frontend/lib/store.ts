@@ -41,6 +41,7 @@ interface SocraticStore {
 
   // Error state
   error: string | null;
+  lastFailedAction: (() => Promise<void>) | null;
 
   // Actions — input
   setTopic: (topic: string) => void;
@@ -65,6 +66,8 @@ interface SocraticStore {
   getRootSources: () => ContextSource[];
   getQuestionsByParent: (parentId: string) => ExplorationNode[];
   getAllQuestionNodes: () => ExplorationNode[];
+  dismissError: () => void;
+  retryLast: () => Promise<void>;
   reset: () => void;
 }
 
@@ -80,6 +83,7 @@ const initialState = {
   selectedTypes: [...ALL_QUESTION_TYPES] as QuestionType[],
   lastClassification: null as InputClassification | null,
   error: null as string | null,
+  lastFailedAction: null as (() => Promise<void>) | null,
 };
 
 // ── Store ───────────────────────────────────────────────────
@@ -107,14 +111,20 @@ export const useAppStore = create<SocraticStore>()(
       // ── Core exploration ───────────────────────────────────
 
       submitInitialInput: async () => {
-        const { topic, selectedTypes } = get();
-        if (!topic.trim()) return;
+        const { topic, selectedTypes, generationStage } = get();
+        if (!topic.trim() || generationStage !== "idle") return;
 
+        // Clear previous exploration tree for fresh start
+        _nodeCounter = 0;
         set({
+          nodes: {},
+          rootId: null,
           error: null,
           generationStage: "classifying",
           activeReflectionId: null,
           selectedNodeId: null,
+          lastClassification: null,
+          lastFailedAction: null,
         });
 
         // Advance stage indicators on a timer (visual feedback)
@@ -193,12 +203,17 @@ export const useAppStore = create<SocraticStore>()(
             err instanceof Error
               ? err.message
               : "Failed to generate questions";
-          set({ error: message, generationStage: "idle" });
+          set({
+            error: message,
+            generationStage: "idle",
+            lastFailedAction: () => get().submitInitialInput(),
+          });
         }
       },
 
       submitReflection: async (questionId, reflectionText) => {
         const state = get();
+        if (state.generationStage !== "idle") return;
         const questionNode = state.nodes[questionId];
         if (!questionNode) return;
 
@@ -310,7 +325,29 @@ export const useAppStore = create<SocraticStore>()(
             err instanceof Error
               ? err.message
               : "Failed to generate follow-up questions";
-          set({ error: message, generationStage: "idle" });
+
+          // Roll back the optimistic reflection node
+          set((prev) => {
+            const updatedNodes = { ...prev.nodes };
+            // Remove the reflection node
+            delete updatedNodes[refId];
+            // Remove refId from parent's children
+            if (updatedNodes[questionId]) {
+              updatedNodes[questionId] = {
+                ...updatedNodes[questionId],
+                children: updatedNodes[questionId].children.filter(
+                  (id) => id !== refId,
+                ),
+              };
+            }
+            return {
+              nodes: updatedNodes,
+              error: message,
+              generationStage: "idle",
+              lastFailedAction: () =>
+                get().submitReflection(questionId, reflectionText),
+            };
+          });
         }
       },
 
@@ -386,6 +423,15 @@ export const useAppStore = create<SocraticStore>()(
       getAllQuestionNodes: () => {
         const { nodes } = get();
         return Object.values(nodes).filter((n) => n.type === "question");
+      },
+
+      dismissError: () => set({ error: null, lastFailedAction: null }),
+
+      retryLast: async () => {
+        const action = get().lastFailedAction;
+        if (!action) return;
+        set({ error: null, lastFailedAction: null });
+        await action();
       },
 
       reset: () => {

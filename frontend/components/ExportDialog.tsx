@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import {
   X,
   Copy,
@@ -30,6 +30,16 @@ export function ExportDialog({ open, onClose }: ExportDialogProps) {
   const [imageStatus, setImageStatus] = useState<
     "idle" | "generating" | "done" | "error"
   >("idle");
+
+  // Close on Escape
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [open, onClose]);
 
   const markdown = exportMarkdown(nodes, rootId);
   const mermaid = exportMermaid(nodes, rootId);

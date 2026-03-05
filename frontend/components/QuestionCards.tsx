@@ -164,8 +164,12 @@ function BranchSection({
 
       {/* Question cards at this level */}
       <div className="space-y-2.5">
-        {questions.map((q) => (
-          <div key={q.id}>
+        {questions.map((q, i) => (
+          <div
+            key={q.id}
+            className={cn(depth > 0 && "card-slide-in")}
+            style={depth > 0 ? { animationDelay: `${i * 60}ms` } : undefined}
+          >
             <QuestionCard node={q} />
 
             {/* Recursively render child branches or loading skeleton */}
@@ -236,11 +240,17 @@ export function QuestionCards() {
         )}
       </div>
 
-      <BranchSection
-        parentNode={rootNode}
-        questions={topQuestions}
-        depth={0}
-      />
+      {topQuestions.length > 0 ? (
+        <BranchSection
+          parentNode={rootNode}
+          questions={topQuestions}
+          depth={0}
+        />
+      ) : (
+        <p className="py-6 text-center text-sm text-muted-foreground">
+          No questions were generated. Try rephrasing your input with more detail.
+        </p>
+      )}
     </div>
   );
 }

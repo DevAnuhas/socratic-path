@@ -35,7 +35,7 @@ export function QuestionNode({ data }: NodeProps) {
       <Handle
         type="target"
         position={Position.Top}
-        className="!h-2 !w-2 !border-2 !border-white !bg-foreground/25"
+        className="h-2! w-2! border-2! border-white! bg-foreground/25!"
       />
 
       {/* Type badge */}
@@ -88,7 +88,7 @@ export function QuestionNode({ data }: NodeProps) {
       <Handle
         type="source"
         position={Position.Bottom}
-        className="!h-2 !w-2 !border-2 !border-white !bg-foreground/25"
+        className="h-2! w-2! border-2! border-white! bg-foreground/25!"
       />
     </div>
   );

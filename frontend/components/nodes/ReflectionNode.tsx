@@ -16,7 +16,7 @@ export function ReflectionNode({ data }: NodeProps) {
   return (
     <div
       className={cn(
-        "w-[240px] rounded-lg border border-dashed border-foreground/15",
+        "w-60 rounded-lg border border-dashed border-foreground/15",
         "bg-secondary/40 px-3.5 py-2.5 shadow-sm",
         "transition-all duration-200 hover:shadow-md",
       )}
@@ -25,7 +25,7 @@ export function ReflectionNode({ data }: NodeProps) {
       <Handle
         type="target"
         position={Position.Top}
-        className="!h-2 !w-2 !border-2 !border-white !bg-foreground/25"
+        className="h-2! w-2! border-2! border-white! bg-foreground/25!"
       />
 
       {/* Header */}
@@ -53,7 +53,7 @@ export function ReflectionNode({ data }: NodeProps) {
       <Handle
         type="source"
         position={Position.Bottom}
-        className="!h-2 !w-2 !border-2 !border-white !bg-foreground/25"
+        className="h-2! w-2! border-2! border-white! bg-foreground/25!"
       />
     </div>
   );

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { BrainCircuit, HelpCircle, Share2 } from "lucide-react";
+import { BrainCircuit, HelpCircle, Share2, RefreshCw, X } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { InputPanel } from "@/components/InputPanel";
@@ -45,10 +45,38 @@ function EmptyState() {
   );
 }
 
-function ErrorBanner({ message }: { message: string }) {
+function ErrorBanner({
+  message,
+  canRetry,
+}: {
+  message: string;
+  canRetry: boolean;
+}) {
+  const retryLast = useAppStore((s) => s.retryLast);
+  const dismissError = useAppStore((s) => s.dismissError);
+
   return (
-    <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-      <strong className="font-semibold">Error:</strong> {message}
+    <div className="flex items-start justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+      <div className="flex-1">
+        <strong className="font-semibold">Error:</strong> {message}
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        {canRetry && (
+          <button
+            onClick={retryLast}
+            className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-white px-2.5 py-1 text-xs font-medium text-red-700 transition-colors hover:bg-red-100 cursor-pointer"
+          >
+            <RefreshCw className="h-3 w-3" />
+            Retry
+          </button>
+        )}
+        <button
+          onClick={dismissError}
+          className="rounded p-0.5 text-red-400 transition-colors hover:text-red-700 cursor-pointer"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
     </div>
   );
 }
@@ -66,6 +94,7 @@ export default function Home() {
   const rootId = useAppStore((s) => s.rootId);
   const error = useAppStore((s) => s.error);
   const nodes = useAppStore((s) => s.nodes);
+  const lastFailedAction = useAppStore((s) => s.lastFailedAction);
   const [exportOpen, setExportOpen] = useState(false);
 
   const isLoading = generationStage !== "idle";
@@ -116,7 +145,7 @@ export default function Home() {
       {/* Error */}
       {error && (
         <section className="mb-6">
-          <ErrorBanner message={error} />
+          <ErrorBanner message={error} canRetry={lastFailedAction !== null} />
         </section>
       )}
 
