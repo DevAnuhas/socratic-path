@@ -1,8 +1,6 @@
 import axios, { AxiosError } from "axios";
 import { createClient } from "./supabase";
 import type {
-	GenerateRequest,
-	GenerateResponse,
 	ExploreRequest,
 	ExploreResponse,
 	ExplorationSummary,
@@ -52,20 +50,6 @@ function extractErrorMessage(err: unknown): string {
 	return "An unexpected error occurred";
 }
 
-export async function generateQuestions(
-	request: GenerateRequest,
-): Promise<GenerateResponse> {
-	try {
-		const { data } = await client.post<GenerateResponse>(
-			"/api/generate",
-			request,
-		);
-		return data;
-	} catch (err) {
-		throw new Error(extractErrorMessage(err));
-	}
-}
-
 export async function exploreQuestion(
 	request: ExploreRequest,
 ): Promise<ExploreResponse> {
@@ -93,18 +77,15 @@ export async function checkHealth(): Promise<boolean> {
 
 export async function listExplorations(): Promise<ExplorationSummary[]> {
 	try {
-		const { data } = await client.get<ExplorationSummary[]>(
-			"/api/explorations",
-		);
+		const { data } =
+			await client.get<ExplorationSummary[]>("/api/explorations");
 		return data;
 	} catch (err) {
 		throw new Error(extractErrorMessage(err));
 	}
 }
 
-export async function getExploration(
-	id: string,
-): Promise<ExplorationDetail> {
+export async function getExploration(id: string): Promise<ExplorationDetail> {
 	try {
 		const { data } = await client.get<ExplorationDetail>(
 			`/api/explorations/${id}`,

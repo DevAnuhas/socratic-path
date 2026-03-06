@@ -20,7 +20,7 @@ from backend.services.question_gen import QuestionGenerationService
 from backend.services.gemini_service import GeminiService
 from backend.services.context_router import ContextRouter
 from backend.services.database import DatabaseService
-from backend.routes import generate, explore, explorations
+from backend.routes import explore, explorations
 
 logging.basicConfig(
     level=logging.INFO,
@@ -58,10 +58,6 @@ async def lifespan(app: FastAPI):
     )
 
     # Inject services into route modules
-    generate.keyphrase_service = _keyphrase_service
-    generate.wikipedia_service = _wikipedia_service
-    generate.question_gen_service = _question_gen_service
-
     explore.context_router = _context_router
     explore.question_gen_service = _question_gen_service
 
@@ -91,7 +87,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(generate.router)
 app.include_router(explore.router)
 app.include_router(explorations.router)
 

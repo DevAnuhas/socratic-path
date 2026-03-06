@@ -10,11 +10,6 @@ VALID_QUESTION_TYPES = [
 ]
 
 
-class GenerateRequest(BaseModel):
-    topic: str = Field(..., min_length=1, max_length=2000)
-    question_types: list[str] = Field(default=VALID_QUESTION_TYPES)
-
-
 class Keyphrase(BaseModel):
     text: str
     score: float
@@ -31,14 +26,6 @@ class Question(BaseModel):
     type: str
     text: str
     related_keyphrases: list[str]
-
-
-class GenerateResponse(BaseModel):
-    topic: str
-    keyphrases: list[Keyphrase]
-    context_sources: list[ContextSource]
-    questions: list[Question]
-    processing_time_ms: float
 
 
 class AncestryNode(BaseModel):
