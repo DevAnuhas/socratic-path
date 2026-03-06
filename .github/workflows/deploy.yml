@@ -8,8 +8,48 @@ on:
       - "Dockerfile"
       - "pyproject.toml"
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/socraticpath-app
+
 jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest
+
+      - name: Build and push app image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: project=socratic-path
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          cache-to: type=inline
+
   deploy:
+    needs: build-and-push
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to Droplet via SSH
@@ -19,23 +59,54 @@ jobs:
           username: root
           key: ${{ secrets.DROPLET_SSH_KEY }}
           script: |
-            cd /root/socratic-path
+            echo ${{ secrets.GHCR_READ_PAT }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            docker pull ghcr.io/${{ github.repository_owner }}/socraticpath-app:latest
 
-            # Pull latest changes
-            git pull origin main
-
-            # Rebuild and restart
-            docker build -t socratic-path .
-            docker stop socratic-path || true
-            docker rm socratic-path || true
-            docker run -d --restart unless-stopped \
-              -p 8000:8000 \
+            docker stop socratic-path-new || true
+            docker rm socratic-path-new || true
+            docker run -d \
+              -p 127.0.0.1:8000:8000 \
               -e GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }} \
               -e SUPABASE_URL=${{ secrets.SUPABASE_URL }} \
               -e SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }} \
               -e FRONTEND_URL=${{ secrets.FRONTEND_URL }} \
-              --name socratic-path \
-              socratic-path
+              --memory=1.5g --memory-swap=2g --cpus=1.5 \
+              --restart unless-stopped \
+              --label project=socratic-path \
+              --name socratic-path-new \
+              ghcr.io/${{ github.repository_owner }}/socraticpath-app:latest
 
-            # Clean up old images
-            docker image prune -f
+            echo "Waiting for new container to pass health check..."
+            for i in $(seq 1 24); do
+              STATUS=$(docker inspect --format='{{.State.Health.Status}}' socratic-path-new 2>/dev/null || echo "missing")
+              echo "  Attempt $i/24: $STATUS"
+              if [ "$STATUS" = "healthy" ]; then
+                echo "Container is healthy — proceeding with cutover."
+                break
+              fi
+              if [ "$STATUS" = "unhealthy" ]; then
+                echo "ERROR: New container is unhealthy. Aborting — old container still running."
+                docker stop socratic-path-new
+                docker rm socratic-path-new
+                exit 1
+              fi
+              sleep 5
+            done
+
+            FINAL=$(docker inspect --format='{{.State.Health.Status}}' socratic-path-new 2>/dev/null || echo "missing")
+            if [ "$FINAL" != "healthy" ]; then
+              echo "ERROR: Timed out waiting for health check. Aborting — old container still running."
+              docker stop socratic-path-new
+              docker rm socratic-path-new
+              exit 1
+            fi
+
+            # Cutover: stop the old container and rename the new one
+            docker stop socratic-path || true
+            docker rm socratic-path || true
+            docker rename socratic-path-new socratic-path
+
+            echo "Deploy successful."
+
+            # Prune dangling images scoped to this project only (not all images on host)
+            docker image prune -f --filter "label=project=socratic-path"

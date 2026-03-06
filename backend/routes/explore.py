@@ -85,7 +85,7 @@ async def explore(
 
     for i, qtype in enumerate(types):
         try:
-            text = question_gen_service.generate(
+            text = await question_gen_service.generate_async(
                 user_input=request.text,
                 question_type=qtype,
                 retrieved_context=ctx.combined_context,

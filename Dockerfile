@@ -1,32 +1,18 @@
-FROM python:3.11-slim
+FROM ghcr.io/devanuhas/socraticpath-base:latest
 
 WORKDIR /app
 
-ENV PIP_NO_CACHE_DIR=1
-ENV PYTHONUNBUFFERED=1
-ENV MODEL_PATH=/app/model
-ENV USE_FP16=true
-ENV NLTK_DATA=/usr/share/nltk_data
-ENV HF_HOME=/app/.cache/huggingface
-ENV TRANSFORMERS_CACHE=/app/.cache/huggingface
+RUN useradd -m -u 1001 appuser
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends gcc g++ && \
-    rm -rf /var/lib/apt/lists/*
+COPY --chown=appuser:appuser backend/ backend/
 
-RUN pip install \
-    torch==2.6.0+cpu \
-    --extra-index-url https://download.pytorch.org/whl/cpu
+USER appuser
 
-COPY pyproject.toml .
-RUN pip install . && \
-    pip install supabase "python-jose[cryptography]" huggingface_hub
+# start-period accounts for T5 model load time (~60s)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')" || exit 1
 
-RUN python -c "import nltk; nltk.download('averaged_perceptron_tagger_eng', download_dir='/usr/share/nltk_data')"
-
-COPY backend/ backend/
-
-RUN python -c "from huggingface_hub import snapshot_download; snapshot_download('DevAnuhas/socraticpath-t5-base', local_dir='/app/model', local_dir_use_symlinks=False)"
+LABEL project=socratic-path
 
 EXPOSE 8000
 

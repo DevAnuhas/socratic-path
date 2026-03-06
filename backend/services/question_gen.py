@@ -1,5 +1,7 @@
+import asyncio
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import torch
@@ -15,6 +17,9 @@ GENERATION_CONFIG = dict(
 )
 
 DEFAULT_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "t5-base-lora" / "merged"
+
+# max_workers=1: one model instance, one inference at a time
+_inference_executor = ThreadPoolExecutor(max_workers=1)
 
 
 class QuestionGenerationService:
@@ -96,3 +101,23 @@ class QuestionGenerationService:
 
         text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
         return text.replace("[Question]", "").strip()
+
+    async def generate_async(
+        self,
+        user_input: str,
+        question_type: str,
+        retrieved_context: str = "",
+    ) -> str:
+        """Non-blocking wrapper around generate() for use in async request handlers.
+
+        Offloads the CPU-bound T5 inference to a dedicated single-worker thread
+        pool so the asyncio event loop is never blocked during generation.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            _inference_executor,
+            self.generate,
+            user_input,
+            question_type,
+            retrieved_context,
+        )

@@ -1,0 +1,49 @@
+# Stage 1: compile Python packages that need gcc; result copied to final stage
+FROM python:3.11-slim AS builder
+
+WORKDIR /app
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends gcc g++ && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN pip install --prefix=/install \
+    torch==2.6.0+cpu \
+    --extra-index-url https://download.pytorch.org/whl/cpu
+
+COPY pyproject.toml .
+RUN pip install --prefix=/install . && \
+    pip install --prefix=/install supabase "python-jose[cryptography]" huggingface_hub
+
+# Stage 2: download model (separate stage so layer cache is independent of deps)
+FROM python:3.11-slim AS model-downloader
+
+COPY --from=builder /install /usr/local
+
+ENV HF_HOME=/app/.cache/huggingface
+
+WORKDIR /app
+
+RUN python -c "\
+from huggingface_hub import snapshot_download; \
+snapshot_download('DevAnuhas/socraticpath-t5-base', local_dir='/app/model', local_dir_use_symlinks=False)"
+
+# Stage 3: final base image — no build tools, no app code
+FROM python:3.11-slim
+
+WORKDIR /app
+
+ENV PIP_NO_CACHE_DIR=1
+ENV PYTHONUNBUFFERED=1
+ENV MODEL_PATH=/app/model
+ENV USE_FP16=false
+ENV NLTK_DATA=/usr/share/nltk_data
+ENV HF_HOME=/app/.cache/huggingface
+ENV TRANSFORMERS_CACHE=/app/.cache/huggingface
+
+COPY --from=builder /install /usr/local
+COPY --from=model-downloader /app/model /app/model
+
+RUN python -c "import nltk; nltk.download('averaged_perceptron_tagger_eng', download_dir='/usr/share/nltk_data')"
+
+LABEL project=socratic-path
