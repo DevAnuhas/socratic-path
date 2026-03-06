@@ -1,5 +1,4 @@
 import logging
-from typing import List, Tuple
 
 import nltk
 from nltk import pos_tag, word_tokenize
@@ -58,6 +57,17 @@ def _is_nominal(phrase: str) -> bool:
     return True
 
 
+def find_related_keyphrases(question_text: str, keyphrases: list[str]) -> list[str]:
+    """Simple word-overlap heuristic to link questions to keyphrases."""
+    q_lower = question_text.lower()
+    related = []
+    for kp in keyphrases:
+        words = kp.lower().split()
+        if any(w in q_lower for w in words if len(w) > 2):
+            related.append(kp)
+    return related if related else keyphrases[:1]
+
+
 class KeyphraseService:
     """Extracts keyphrases from text using KeyBERT (all-MiniLM-L6-v2)."""
 
@@ -77,7 +87,7 @@ class KeyphraseService:
 
         logger.info("KeyBERT loaded")
 
-    def extract(self, text: str, top_n: int = 5) -> List[Tuple[str, float]]:
+    def extract(self, text: str, top_n: int = 5) -> list[tuple[str, float]]:
         """
         Extract keyphrases with MMR diversity, then filter to nominal phrases.
 

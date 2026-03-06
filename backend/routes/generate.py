@@ -1,7 +1,5 @@
 import time
-import uuid
 import logging
-from typing import List
 
 from fastapi import APIRouter, HTTPException
 
@@ -13,7 +11,7 @@ from backend.schemas.models import (
     ContextSource,
     Question,
 )
-from backend.services.keyphrase import KeyphraseService
+from backend.services.keyphrase import KeyphraseService, find_related_keyphrases
 from backend.services.wikipedia import WikipediaService
 from backend.services.question_gen import QuestionGenerationService
 
@@ -25,17 +23,6 @@ router = APIRouter(prefix="/api")
 keyphrase_service: KeyphraseService = None
 wikipedia_service: WikipediaService = None
 question_gen_service: QuestionGenerationService = None
-
-
-def _find_related_keyphrases(question_text: str, keyphrases: List[str]) -> List[str]:
-    """Simple word-overlap heuristic to link questions to keyphrases."""
-    q_lower = question_text.lower()
-    related = []
-    for kp in keyphrases:
-        words = kp.lower().split()
-        if any(w in q_lower for w in words if len(w) > 2):
-            related.append(kp)
-    return related if related else keyphrases[:1]
 
 
 @router.post("/generate", response_model=GenerateResponse)
@@ -65,7 +52,7 @@ async def generate_questions(request: GenerateRequest):
 
     # Step 2: Retrieve Wikipedia context (non-critical — degrade gracefully)
     # Only look up the top 2 highest-scoring keyphrases to avoid tangential context
-    context_sources: List[ContextSource] = []
+    context_sources: list[ContextSource] = []
     combined_context = ""
     try:
         wiki_results = wikipedia_service.retrieve_batch(keyphrase_texts, max_lookups=2)
@@ -78,7 +65,7 @@ async def generate_questions(request: GenerateRequest):
         logger.warning("Wikipedia retrieval failed, proceeding without context: %s", exc)
 
     # Step 3: Generate one question per requested type
-    questions: List[Question] = []
+    questions: list[Question] = []
     for i, qtype in enumerate(types):
         try:
             text = question_gen_service.generate(
@@ -93,7 +80,7 @@ async def generate_questions(request: GenerateRequest):
                 detail=f"Question generation failed for type '{qtype}'. Please try again.",
             )
 
-        related = _find_related_keyphrases(text, keyphrase_texts)
+        related = find_related_keyphrases(text, keyphrase_texts)
         questions.append(
             Question(
                 id=f"q{i + 1}",

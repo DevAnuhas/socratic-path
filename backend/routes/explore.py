@@ -10,8 +10,6 @@ This endpoint powers the branching exploration graph in the frontend.
 
 import time
 import logging
-from typing import List
-
 from fastapi import APIRouter, Depends, HTTPException
 
 from backend.auth import get_current_user
@@ -25,6 +23,7 @@ from backend.schemas.models import (
     Question,
 )
 from backend.services.context_router import ContextRouter
+from backend.services.keyphrase import find_related_keyphrases
 from backend.services.question_gen import QuestionGenerationService
 
 logger = logging.getLogger(__name__)
@@ -34,17 +33,6 @@ router = APIRouter(prefix="/api")
 # Services injected from main.py at startup
 context_router: ContextRouter = None
 question_gen_service: QuestionGenerationService = None
-
-
-def _find_related_keyphrases(question_text: str, keyphrases: list[str]) -> list[str]:
-    """Simple word-overlap heuristic to link questions to keyphrases."""
-    q_lower = question_text.lower()
-    related = []
-    for kp in keyphrases:
-        words = kp.lower().split()
-        if any(w in q_lower for w in words if len(w) > 2):
-            related.append(kp)
-    return related if related else keyphrases[:1]
 
 
 @router.post("/explore", response_model=ExploreResponse)
@@ -93,7 +81,7 @@ async def explore(
 
     # Step 2: Generate one question per requested type using T5
     keyphrase_texts = [kp for kp, _ in ctx.keyphrases] if ctx.keyphrases else []
-    questions: List[Question] = []
+    questions: list[Question] = []
 
     for i, qtype in enumerate(types):
         try:
@@ -109,7 +97,7 @@ async def explore(
                 detail=f"Question generation failed for type '{qtype}'. Please try again.",
             )
 
-        related = _find_related_keyphrases(text, keyphrase_texts) if keyphrase_texts else []
+        related = find_related_keyphrases(text, keyphrase_texts) if keyphrase_texts else []
         questions.append(
             Question(
                 id=f"q{request.depth}_{i + 1}",

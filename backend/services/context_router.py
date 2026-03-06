@@ -15,7 +15,6 @@ For exploration (depth > 0), the router also handles ancestry context:
 
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
 
 from backend.services.gemini_service import GeminiService
 from backend.services.keyphrase import KeyphraseService
@@ -33,7 +32,7 @@ class ContextResult:
 
     # What was determined about the input
     input_type: str                     # argumentative | factual | opinion | vague
-    core_thesis: Optional[str]          # Extracted thesis (if argumentative/opinion)
+    core_thesis: str | None          # Extracted thesis (if argumentative/opinion)
     classification_confidence: float
 
     # The context generated for T5
@@ -45,7 +44,7 @@ class ContextResult:
     context_sources: list = field(default_factory=list)  # WikiResult dicts
 
     # Depth guidance
-    depth_nudge: Optional[str] = None   # Soft warning message if depth > 3
+    depth_nudge: str | None = None   # Soft warning message if depth > 3
 
 
 class ContextRouter:
@@ -64,7 +63,7 @@ class ContextRouter:
     def route(
         self,
         text: str,
-        ancestry: Optional[list[dict]] = None,
+        ancestry: list[dict] | None = None,
         depth: int = 0,
     ) -> ContextResult:
         """
@@ -109,15 +108,15 @@ class ContextRouter:
         result.classification_confidence = confidence
 
         # Step 5: Add depth nudge if deep exploration
-        if depth >= 4:
-            result.depth_nudge = (
-                "You're exploring deeply here. Consider branching to a sibling "
-                "question to broaden your perspective."
-            )
-        elif depth >= 6:
+        if depth >= 6:
             result.depth_nudge = (
                 "This is a very deep thread. You might discover new insights "
                 "by exploring different assumptions in your original argument."
+            )
+        elif depth >= 4:
+            result.depth_nudge = (
+                "You're exploring deeply here. Consider branching to a sibling "
+                "question to broaden your perspective."
             )
 
         return result
@@ -152,7 +151,7 @@ class ContextRouter:
         self,
         text: str,
         input_type: str,
-        core_thesis: Optional[str],
+        core_thesis: str | None,
         ancestry_context: str,
     ) -> ContextResult:
         """Generate context via Gemini for argumentative/opinion inputs."""

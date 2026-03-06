@@ -1,5 +1,5 @@
 import logging
-from typing import List, Optional, TypedDict
+from typing import TypedDict
 
 import wikipediaapi
 
@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 class WikiResult(TypedDict):
     keyphrase: str
     summary: str
-    url: Optional[str]
+    url: str | None
 
 
 class WikipediaService:
@@ -21,7 +21,7 @@ class WikipediaService:
             language="en",
         )
 
-    def lookup(self, keyphrase: str) -> Optional[WikiResult]:
+    def lookup(self, keyphrase: str) -> WikiResult | None:
         """
         Fetch a short Wikipedia summary for a single keyphrase.
 
@@ -48,14 +48,14 @@ class WikipediaService:
             return None
 
     def retrieve_batch(
-        self, keyphrases: List[str], max_lookups: int = 3
-    ) -> List[WikiResult]:
+        self, keyphrases: list[str], max_lookups: int = 3
+    ) -> list[WikiResult]:
         """
         Look up Wikipedia context for up to `max_lookups` keyphrases.
 
         Limits lookups to keep prompt length manageable and response time low.
         """
-        results: List[WikiResult] = []
+        results: list[WikiResult] = []
         for kp in keyphrases[:max_lookups]:
             result = self.lookup(kp)
             if result:
