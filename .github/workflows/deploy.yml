@@ -68,6 +68,8 @@ jobs:
 
             docker stop socratic-path-new 2>/dev/null || true
             docker rm socratic-path-new 2>/dev/null || true
+            docker stop socratic-path 2>/dev/null || true
+            docker rm socratic-path 2>/dev/null || true
             docker run -d \
               -p 127.0.0.1:8000:8000 \
               -e GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }} \
@@ -80,28 +82,37 @@ jobs:
               --name socratic-path-new \
               ghcr.io/devanuhas/socraticpath-app:latest
 
-            echo "Waiting for new container to pass health check..."
-            for i in $(seq 1 24); do
-              STATUS=$(docker inspect --format='{{.State.Health.Status}}' socratic-path-new 2>/dev/null || echo "missing")
-              echo "  Attempt $i/24: $STATUS"
-              if [ "$STATUS" = "healthy" ]; then
-                echo "Container is healthy — proceeding with cutover."
+            echo "Waiting for service to become ready (up to 180s)..."
+            READY=0
+            for i in $(seq 1 36); do
+              if curl -sf http://127.0.0.1:8000/api/health > /dev/null 2>&1; then
+                echo "Service is ready after $((i * 5))s."
+                READY=1
                 break
               fi
-              if [ "$STATUS" = "unhealthy" ]; then
-                echo "ERROR: New container is unhealthy. Aborting — old container still running."
-                docker stop socratic-path-new
-                docker rm socratic-path-new
+              if [ "$(docker inspect --format='{{.State.Status}}' socratic-path-new 2>/dev/null)" != "running" ]; then
+                echo "ERROR: Container exited unexpectedly."
+                docker logs --tail 50 socratic-path-new
+                docker rm -f socratic-path-new
                 exit 1
               fi
+              echo "  Waiting... ($((i * 5))s elapsed)"
               sleep 5
             done
 
-            FINAL=$(docker inspect --format='{{.State.Health.Status}}' socratic-path-new 2>/dev/null || echo "missing")
-            if [ "$FINAL" != "healthy" ]; then
-              echo "ERROR: Timed out waiting for health check. Aborting — old container still running."
+            if [ "$READY" != "1" ]; then
+              echo "ERROR: Service did not become ready within 180s."
+              docker logs --tail 50 socratic-path-new
               docker stop socratic-path-new
-              docker rm socratic-path-new
+              docker rm -f socratic-path-new
+              exit 1
+            fi
+
+            FINAL=$(docker inspect --format='{{.State.Status}}' socratic-path-new 2>/dev/null || echo "missing")
+            if [ "$FINAL" != "running" ]; then
+              echo "ERROR: Container is not running after wait. Aborting."
+              docker stop socratic-path-new 2>/dev/null || true
+              docker rm socratic-path-new 2>/dev/null || true
               exit 1
             fi
 

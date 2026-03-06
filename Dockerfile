@@ -8,8 +8,8 @@ COPY --chown=appuser:appuser backend/ backend/
 
 USER appuser
 
-# start-period accounts for T5 model load time (~60s)
-HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 \
+# start-period covers T5 model load time; retries=5 for runtime flap protection
+HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=5 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')" || exit 1
 
 LABEL project=socratic-path

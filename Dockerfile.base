@@ -28,6 +28,9 @@ RUN python -c "\
 from huggingface_hub import snapshot_download; \
 snapshot_download('DevAnuhas/socraticpath-t5-base', local_dir='/app/model', local_dir_use_symlinks=False)"
 
+# Pre-download the KeyBERT embedding model so the app never needs network at runtime
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+
 # Stage 3: final base image — no build tools, no app code
 FROM python:3.11-slim
 
@@ -43,6 +46,9 @@ ENV TRANSFORMERS_CACHE=/app/.cache/huggingface
 
 COPY --from=builder /install /usr/local
 COPY --from=model-downloader /app/model /app/model
+COPY --from=model-downloader /app/.cache /app/.cache
+
+RUN chown -R 1001:1001 /app/.cache
 
 RUN python -c "import nltk; nltk.download('averaged_perceptron_tagger_eng', download_dir='/usr/share/nltk_data')"
 
