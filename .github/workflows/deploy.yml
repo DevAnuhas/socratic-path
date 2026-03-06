@@ -1,0 +1,41 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "Dockerfile"
+      - "pyproject.toml"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to Droplet via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DROPLET_IP }}
+          username: root
+          key: ${{ secrets.DROPLET_SSH_KEY }}
+          script: |
+            cd /root/socratic-path
+
+            # Pull latest changes
+            git pull origin main
+
+            # Rebuild and restart
+            docker build -t socratic-path .
+            docker stop socratic-path || true
+            docker rm socratic-path || true
+            docker run -d --restart unless-stopped \
+              -p 8000:8000 \
+              -e GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }} \
+              -e SUPABASE_URL=${{ secrets.SUPABASE_URL }} \
+              -e SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }} \
+              -e FRONTEND_URL=${{ secrets.FRONTEND_URL }} \
+              --name socratic-path \
+              socratic-path
+
+            # Clean up old images
+            docker image prune -f
