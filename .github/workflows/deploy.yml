@@ -62,18 +62,19 @@ jobs:
           username: root
           key: ${{ secrets.DROPLET_SSH_KEY }}
           script: |
+            set -e
             echo ${{ secrets.GHCR_READ_PAT }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             docker pull ghcr.io/devanuhas/socraticpath-app:latest
 
-            docker stop socratic-path-new || true
-            docker rm socratic-path-new || true
+            docker stop socratic-path-new 2>/dev/null || true
+            docker rm socratic-path-new 2>/dev/null || true
             docker run -d \
               -p 127.0.0.1:8000:8000 \
               -e GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }} \
               -e SUPABASE_URL=${{ secrets.SUPABASE_URL }} \
               -e SUPABASE_SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }} \
               -e FRONTEND_URL=${{ secrets.FRONTEND_URL }} \
-              --memory=1.5g --memory-swap=2g --cpus=1.5 \
+              --memory=1.5g --memory-swap=2g --cpus=1.0 \
               --restart unless-stopped \
               --label project=socratic-path \
               --name socratic-path-new \
