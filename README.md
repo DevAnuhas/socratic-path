@@ -18,6 +18,7 @@ AI-powered Socratic question generation combining fine-tuned T5 models with inte
 - [Frontend](#frontend)
 - [Setup & Installation](#setup--installation)
 - [Running the Application](#running-the-application)
+- [Testing](#testing)
 - [Docker Deployment](#docker-deployment)
 - [Tech Stack](#tech-stack)
 - [References](#references)
@@ -119,6 +120,10 @@ socratic-path/
 │   │   ├── page.tsx                  # Main page (auth-gated)
 │   │   ├── login/page.tsx            # Google OAuth login
 │   │   └── globals.css               # Tailwind v4 + custom theme
+│   ├── __tests__/
+│   │   └── lib/
+│   │       ├── export.test.ts        # Unit tests for markdown export logic
+│   │       └── store.test.ts         # Unit tests for Zustand store actions
 │   ├── components/
 │   │   ├── InputPanel.tsx            # Topic input + type toggles + generate
 │   │   ├── QuestionCards.tsx         # Colour-coded cards with reflection areas
@@ -173,11 +178,16 @@ socratic-path/
 │       ├── logs/                     # TensorBoard logs
 │       └── merged/                   # Merged model for inference
 │
+├── tests/                            # Backend unit tests (pytest)
+│   ├── test_context_router.py        # ContextRouter routing, ancestry propagation, depth nudges
+│   ├── test_keyphrase_service.py     # KeyphraseService POS filtering & fallback logic
+│   └── test_question_gen.py          # QuestionGenerationService prompt, truncation, async
+│
 ├── datasets/                         # Dataset files (git-ignored)
 ├── evaluation_results/               # Evaluation outputs & plots
 ├── docs/                             # Architecture & training decision docs
 ├── Dockerfile                        # Production container (CPU PyTorch)
-├── pyproject.toml                    # Python deps (uv) — runtime + training extras
+├── pyproject.toml                    # Python deps (uv) — runtime + training + dev extras
 └── uv.lock                           # Dependency lock file
 ```
 
@@ -453,6 +463,73 @@ Frontend runs at `http://localhost:3000`.
 7. Reflect on generated questions to explore deeper branches
 
 Typical inference time is 3-8 seconds (classification + context routing + model inference).
+
+---
+
+## Testing
+
+### Backend Unit Tests (pytest)
+
+Unit tests cover the three core backend services with mocked dependencies — no model weights or external APIs are required.
+
+| File                              | Coverage                                                                                                                                                                        |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/test_context_router.py`    | Routing decisions (argumentative/factual/vague), Gemini fallback to Wikipedia, shallow vs. deep ancestry propagation, Gemini summarisation at depth > 3, depth nudge thresholds |
+| `tests/test_keyphrase_service.py` | `_is_nominal()` POS-tag filtering (nouns, compound nouns, proper nouns, verb/prep rejection), `KeyphraseService.extract()` short-input and all-filtered fallback paths          |
+| `tests/test_question_gen.py`      | Prompt construction and prefix, context truncation formula, output post-processing (`[Question]` prefix strip, whitespace), async dispatch via `generate_async()`               |
+
+```bash
+# Install dev dependencies
+uv sync --extra dev
+
+# Run all unit tests
+uv run pytest
+
+# Run a specific test file
+uv run pytest tests/test_context_router.py -v
+```
+
+### Frontend Unit Tests (Jest)
+
+Frontend unit tests use Jest with `jest-environment-jsdom` and `@testing-library/jest-dom`.
+
+| File                                    | Coverage                                    |
+| --------------------------------------- | ------------------------------------------- |
+| `frontend/__tests__/lib/store.test.ts`  | Zustand store actions and state transitions |
+| `frontend/__tests__/lib/export.test.ts` | Markdown export logic                       |
+
+```bash
+cd frontend
+
+# Run all tests
+npm test
+
+# Watch mode
+npm run test:watch
+```
+
+### End-to-End API Tests
+
+`scripts/test_e2e.py` runs against a live backend instance and validates the full pipeline:
+
+- Health check (`GET /api/health`)
+- Authentication rejection (missing / malformed JWT)
+- Input validation (empty text → 422, invalid question type → 4xx)
+- Factual input routed to Wikipedia pipeline
+- Opinion/argumentative input routed to Gemini pipeline
+- Complete response schema validation
+- NFR1: end-to-end generation completes within 8 seconds
+- Gemini-to-Wikipedia fallback is present in source
+
+```bash
+# Run against local backend (no auth tests)
+uv run python scripts/test_e2e.py
+
+# Run against a deployed instance with authenticated tests
+BASE_URL=https://your-backend.onrender.com \
+SUPABASE_TEST_TOKEN=your_jwt \
+uv run python scripts/test_e2e.py
+```
 
 ---
 
